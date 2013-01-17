@@ -80,7 +80,7 @@ CONFIGURED_APPS += uORB
 
 CONFIGURED_APPS += mavlink
 CONFIGURED_APPS += mavlink_onboard
-CONFIGURED_APPS += gps
+#CONFIGURED_APPS += gps
 CONFIGURED_APPS += commander
 CONFIGURED_APPS += sdlog
 CONFIGURED_APPS += sensors
@@ -112,6 +112,7 @@ CONFIGURED_APPS += drivers/led
 CONFIGURED_APPS += drivers/blinkm
 CONFIGURED_APPS += drivers/stm32/tone_alarm
 CONFIGURED_APPS += drivers/stm32/adc
+CONFIGURED_APPS += drivers/gps
 CONFIGURED_APPS += drivers/px4fmu
 CONFIGURED_APPS += drivers/hil
 
