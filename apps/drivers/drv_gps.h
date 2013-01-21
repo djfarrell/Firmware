@@ -47,13 +47,21 @@
 #define GPS_DEVICE_PATH	"/dev/gps"
 
 /*
- * ObjDev tag for raw barometer data.
+ * ObjDev tag for GPS data.
  */
 ORB_DECLARE(gps);
 
 /*
  * ioctl() definitions
  */
+#define _GPSIOCBASE			(0x2800)            //TODO: arbitrary choice...
+#define _GPSIOC(_n)		(_IOC(_GPSIOCBASE, _n))
+
+/** configure ubx mode */
+#define GPS_CONFIGURE_UBX	_GPSIOC(0)
+
+/** configure mtk mode */
+#define GPS_CONFIGURE_MTK	_GPSIOC(1)
 
 
 #endif /* _DRV_GPS_H */

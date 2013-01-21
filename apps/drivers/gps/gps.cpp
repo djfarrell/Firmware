@@ -237,30 +237,96 @@ GPS::read(struct file *filp, char *buffer, size_t buflen)
 int
 GPS::ioctl(struct file *filp, int cmd, unsigned long arg)
 {
+	int ret = OK;
 
+	switch (cmd) {
+	case GPS_CONFIGURE_UBX:
+		//TODO: add configure ubx
+		break;
+	case GPS_CONFIGURE_MTK:
+		//TODO: add configure mtk
+		break;
+	case SENSORIOCRESET:
+		//TODO: add reset
+		break;
+	}
 }
 
 void
 GPS::start()
 {
+	/* reset the report ring and state machine */
+	_collect_phase = false;
+	_measure_phase = 0;
+	_oldest_report = _next_report = 0;
 
+	/* schedule a cycle to start things */
+	work_queue(HPWORK, &_work, (worker_t)&GPS::cycle_trampoline, this, 1);
 }
 
 void
 GPS::stop()
 {
-
+	work_cancel(HPWORK, &_work);
 }
 
 void
 GPS::cycle_trampoline(void *arg)
 {
+	GPS *dev = (GPS *)arg;
 
+	dev->cycle();
 }
 
 void
 GPS::cycle()
 {
+	/* collection phase? */
+	if (_collect_phase) {
+
+		/* perform collection */
+		if (OK != collect()) {
+			log("collection error");
+			/* reset the collection state machine and try again */
+			start();
+			return;
+		}
+
+		/* next phase is measurement */
+		_collect_phase = false;
+
+		/*
+		 * Is there a collect->measure gap?
+		 * Don't inject one after temperature measurements, so we can keep
+		 * doing pressure measurements at something close to the desired rate.
+		 */
+//		if ((_measure_phase != 0) &&
+//			(_measure_ticks > USEC2TICK(MS5611_CONVERSION_INTERVAL))) {
+//
+//			/* schedule a fresh cycle call when we are ready to measure again */
+//			work_queue(HPWORK,
+//				   &_work,
+//				   (worker_t)&MS5611::cycle_trampoline,
+//				   this,
+//				   _measure_ticks - USEC2TICK(MS5611_CONVERSION_INTERVAL));
+//
+//			return;
+//		}
+	}
+
+	/* measurement phase */
+	if (OK != measure())
+		log("measure error");
+
+	/* next phase is collection */
+	_collect_phase = true;
+
+	/* schedule a fresh cycle call when the measurement is done */
+	work_queue(HPWORK,
+		   &_work,
+		   (worker_t)&MS5611::cycle_trampoline,
+		   this,
+		   USEC2TICK(MS5611_CONVERSION_INTERVAL));
 
 }
 
