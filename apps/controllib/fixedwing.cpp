@@ -322,8 +322,8 @@ void BlockMultiModeBacksideAutopilot::update()
 			_att.roll, _att.pitch, _att.yaw,
 			_att.rollspeed, _att.pitchspeed, _att.yawspeed
 		);
-		_actuators.control[CH_AIL] = _backsideAutopilot.getAileron();
-		_actuators.control[CH_ELV] = _backsideAutopilot.getElevator();
+		_actuators.control[CH_AIL] = -_backsideAutopilot.getAileron();
+		_actuators.control[CH_ELV] = -_backsideAutopilot.getElevator();
 		_actuators.control[CH_RDR] = _backsideAutopilot.getRudder();
 		_actuators.control[CH_THR] = _backsideAutopilot.getThrottle();
 
@@ -352,7 +352,7 @@ void BlockMultiModeBacksideAutopilot::update()
 			_att.rollspeed, _att.pitchspeed, _att.yawspeed);
 			
 			_actuators.control[CH_AIL] = _stabilization.getAileron();
-			_actuators.control[CH_ELV] = _stabilization.getElevator();
+			_actuators.control[CH_ELV] = -_stabilization.getElevator();
 			_actuators.control[CH_RDR] = _stabilization.getRudder();
 			_actuators.control[CH_THR] = _manual.throttle;
 
