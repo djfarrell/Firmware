@@ -32,29 +32,14 @@
 ############################################################################
 
 #
-# System utility library
+# Graupner HoTT Telemetry application.
 #
 
-CSRCS		 = err.c \
-		   hx_stream.c \
-		   perf_counter.c \
-		   param/param.c \
-		   bson/tinybson.c \
-		   conversions.c \
-		   cpuload.c \
-		   getopt_long.c \
-		   up_cxxinitialize.c \
-		   airspeed.c
+# The following line is required for accessing UARTs directly.
+INCLUDES	 = $(TOPDIR)/arch/arm/src/stm32 $(TOPDIR)/arch/arm/src/common
 
-#		   ppm_decode.c \
-
-#
-# XXX this really should be a CONFIG_* test
-#
-ifeq ($(TARGET),px4fmu)
-CSRCS		+= systemlib.c \
-		   pid/pid.c \
-		   geo/geo.c
-endif
+APPNAME		 = hott_telemetry
+PRIORITY	 = SCHED_PRIORITY_DEFAULT
+STACKSIZE	 = 2048
 
 include $(APPDIR)/mk/app.mk

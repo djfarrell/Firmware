@@ -1,7 +1,7 @@
 /****************************************************************************
  *
- *   Copyright (C) 2012-2013 PX4 Development Team. All rights reserved.
- *   Author: Lorenz Meier <lm@inf.ethz.ch>
+ *   Copyright (C) 2012 PX4 Development Team. All rights reserved.
+ *   Author: @author Simon Wilks <sjwilks@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,49 +33,55 @@
  ****************************************************************************/
 
 /**
- * @file airspeed.c
- * Airspeed estimation
- *
- * @author Lorenz Meier <lm@inf.ethz.ch>
+ * @file messages.c
  *
  */
 
-#include "math.h"
-#include "conversions.h"
-#include "airspeed.h"
+#include "messages.h"
 
+#include <string.h>
+#include <systemlib/systemlib.h>
+#include <unistd.h>
+#include <uORB/topics/battery_status.h>
+#include <uORB/topics/sensor_combined.h>
 
-float calc_indicated_airspeed(float pressure_front, float pressure_ambient, float temperature)
+static int battery_sub = -1;
+static int sensor_sub = -1;
+
+void messages_init(void)
 {
-	return sqrtf((2.0f*(pressure_front - pressure_ambient)) / CONSTANTS_AIR_DENSITY_SEA_LEVEL_15C);
+	battery_sub = orb_subscribe(ORB_ID(battery_status));
+	sensor_sub = orb_subscribe(ORB_ID(sensor_combined));
 }
- 
-/**
- * Calculate true airspeed from indicated airspeed.
- *
- * Note that the true airspeed is NOT the groundspeed, because of the effects of wind
- *
- * @param speed current indicated airspeed
- * @param pressure_ambient pressure at the side of the tube/airplane
- * @param temperature air temperature in degrees celcius
- * @return true airspeed in m/s
- */
-float calc_true_airspeed_from_indicated(float speed, float pressure_ambient, float temperature)
+
+void build_eam_response(uint8_t *buffer, int *size)
 {
-	return speed * sqrtf(CONSTANTS_AIR_DENSITY_SEA_LEVEL_15C / get_air_density(pressure_ambient, temperature));
-}
- 
-/**
- * Directly calculate true airspeed
- *
- * Note that the true airspeed is NOT the groundspeed, because of the effects of wind
- *
- * @param pressure_front pressure inside the pitot/prandl tube
- * @param pressure_ambient pressure at the side of the tube/airplane
- * @param temperature air temperature in degrees celcius
- * @return true airspeed in m/s
- */
-float calc_true_airspeed(float pressure_front, float pressure_ambient, float temperature)
-{
-	return sqrtf((2.0f*(pressure_front - pressure_ambient)) / get_air_density(pressure_ambient, temperature));
+	/* get a local copy of the current sensor values */
+	struct sensor_combined_s raw;
+	memset(&raw, 0, sizeof(raw));
+	orb_copy(ORB_ID(sensor_combined), sensor_sub, &raw);
+
+	/* get a local copy of the battery data */
+	struct battery_status_s battery;
+	memset(&battery, 0, sizeof(battery));
+	orb_copy(ORB_ID(battery_status), battery_sub, &battery);
+
+	struct eam_module_msg msg;
+	*size = sizeof(msg);
+	memset(&msg, 0, *size);
+
+	msg.start = START_BYTE;
+	msg.eam_sensor_id = ELECTRIC_AIR_MODULE;
+	msg.sensor_id = EAM_SENSOR_ID;
+	msg.temperature1 = (uint8_t)(raw.baro_temp_celcius + 20);
+	msg.temperature2 = TEMP_ZERO_CELSIUS;
+	msg.main_voltage_L = (uint8_t)(battery.voltage_v * 10);
+
+	uint16_t alt = (uint16_t)(raw.baro_alt_meter + 500);
+	msg.altitude_L = (uint8_t)alt & 0xff;
+	msg.altitude_H = (uint8_t)(alt >> 8) & 0xff;
+
+	msg.stop = STOP_BYTE;
+
+	memcpy(buffer, &msg, *size);
 }
