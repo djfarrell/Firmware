@@ -52,9 +52,10 @@
 #include <stdio.h>
 #include <math.h>
 #include <unistd.h>
+#include <termios.h>
+#include <fcntl.h>
 
 #include <nuttx/arch.h>
-#include <nuttx/wqueue.h>
 #include <nuttx/clock.h>
 
 #include <arch/board/board.h>
@@ -62,11 +63,17 @@
 #include <drivers/drv_hrt.h>
 
 #include <systemlib/perf_counter.h>
+#include <systemlib/scheduling_priorities.h>
 #include <systemlib/err.h>
 
 #include <drivers/drv_gps.h>
 
 #include <uORB/topics/vehicle_gps_position.h>
+
+#include "ubx.h"
+
+#define SEND_BUFFER_LENGTH 100
+#define TIMEOUT 1000000 //1s
 
 /* oddly, ERROR is not defined for c++ */
 #ifdef ERROR
@@ -79,88 +86,61 @@ static const int ERROR = -1;
 #endif
 
 
+
 class GPS : public device::CDev
 {
 public:
 	GPS();
 	~GPS();
 
-	virtual int		init();
+	virtual int			init();
 
-	virtual ssize_t		read(struct file *filp, char *buffer, size_t buflen);
-	virtual int		ioctl(struct file *filp, int cmd, unsigned long arg);
+	virtual int			ioctl(struct file *filp, int cmd, unsigned long arg);
 
 	/**
 	 * Diagnostics - print some basic information about the driver.
 	 */
-	void			print_info();
-
-protected:
-	virtual int		probe();
+	void				print_info();
 
 private:
+
+	int					_task_should_exit;
+	int					_serial_fd;		///< serial interface to GPS
+	int					_baudrate;
+	uint8_t				_send_buffer[SEND_BUFFER_LENGTH];
 	perf_counter_t		_sample_perf;
 	perf_counter_t		_comms_errors;
 	perf_counter_t		_buffer_overflows;
 
-	struct work_s		_work;
+	volatile int		_task;		///< worker task
 
-	unsigned		_num_reports;
-	volatile unsigned	_next_report;
-	volatile unsigned	_oldest_report;
+	bool				_config_needed;
+	bool				_healthy;
+	gps_driver_mode_t	_mode;
+	unsigned 			_messages_received;
+
+	GPS_Helper*			_Helper;
+
 	struct vehicle_gps_position_s	*_reports;
 
 	orb_advert_t		_gps_topic;
 
-	/**
-	 * Initialize the automatic measurement state machine and start it.
-	 */
-	void			start();
+	void			recv();
+
+	void			config();
+
+	static void		task_main_trampoline(void *arg);
+
 
 	/**
-	 * Stop the automatic measurement state machine.
+	 * worker task
 	 */
-	void			stop();
-
-	/**
-	 * Perform a poll cycle; collect from the previous measurement
-	 * and start a new one.
-	 *
-	 * This is the heart of the measurement state machine.  This function
-	 * alternately starts a measurement, or collects the data from the
-	 * previous measurement.
-	 *
-	 * When the interval between measurements is greater than the minimum
-	 * measurement interval, a gap is inserted between collection
-	 * and measurement to provide the most recent measurement possible
-	 * at the next interval.
-	 */
-	void			cycle();
-
-	/**
-	 * Static trampoline from the workq context; because we don't have a
-	 * generic workq wrapper yet.
-	 *
-	 * @param arg		Instance pointer for the driver that is polling.
-	 */
-	static void		cycle_trampoline(void *arg);
-
-	/**
-	 * Issue a measurement command for the current state.
-	 *
-	 * @return		OK if the measurement command was successful.
-	 */
-	int			measure();
-
-	/**
-	 * Collect the result of the most recent measurement.
-	 */
-	int			collect();
+	void			task_main(void);
 
 	/**
 	 * Send a reset command to the GPS
 	 */
-	int			cmd_reset();
+	void			cmd_reset();
 
 };
 
@@ -170,26 +150,47 @@ private:
  */
 extern "C" __EXPORT int gps_main(int argc, char *argv[]);
 
+namespace
+{
+
+GPS	*g_dev;
+
+}
+
 
 GPS::GPS() :
 	CDev("gps", GPS_DEVICE_PATH),
-	_num_reports(0),
-	_next_report(0),
-	_oldest_report(0),
+	_task_should_exit(false),
+	_baudrate(38400),
+	_config_needed(true),
+	_healthy(false),
+	_mode(GPS_DRIVER_MODE_UBX),
+	_messages_received(0),
+	_Helper(nullptr),
 	_reports(nullptr)
 {
-	// enable debug() calls
+	/* we need this potentially before it could be set in task_main */
+	g_dev = this;
+
 	_debug_enabled = true;
 	debug("[gps driver] instantiated");
-
-	// work_cancel in the dtor will explode if we don't do this...
-	memset(&_work, 0, sizeof(_work));
 }
 
 GPS::~GPS()
 {
-	/* make sure we are truly inactive */
-	stop();
+	/* tell the task we want it to go away */
+	_task_should_exit = true;
+
+	/* spin waiting for the task to stop */
+	for (unsigned i = 0; (i < 10) && (_task != -1); i++) {
+		/* give it another 100ms */
+		usleep(100000);
+	}
+
+	/* well, kill it anyway, though this will probably crash */
+	if (_task != -1)
+		task_delete(_task);
+	g_dev = nullptr;
 }
 
 int
@@ -201,37 +202,20 @@ GPS::init()
 	if (CDev::init() != OK)
 		goto out;
 
-	/* allocate basic report buffers */
-	_num_reports = 2;
-	_reports = new struct vehicle_gps_position_s[_num_reports];
+	/* start the IO interface task */
+	_task = task_create("gps", SCHED_PRIORITY_SLOW_DRIVER, 4096, (main_t)&GPS::task_main_trampoline, nullptr);
 
-	if (_reports == nullptr)
-		goto out;
-
-	_oldest_report = _next_report = 0;
-
-	/* get a publish handle on the baro topic */
-	memset(&_reports[0], 0, sizeof(_reports[0]));
-	_gps_topic = orb_advertise(ORB_ID(vehicle_gps_position), &_reports[0]);
+	if (_task < 0) {
+		debug("task start failed: %d", errno);
+		return -errno;
+	}
 
 	if (_gps_topic < 0)
-		debug("failed to create sensor_baro object");
+		debug("failed to create GPS object");
 
 	ret = OK;
 out:
 	return ret;
-}
-
-int
-GPS::probe()
-{
-
-}
-
-ssize_t
-GPS::read(struct file *filp, char *buffer, size_t buflen)
-{
-
 }
 
 int
@@ -246,106 +230,155 @@ GPS::ioctl(struct file *filp, int cmd, unsigned long arg)
 	case GPS_CONFIGURE_MTK:
 		//TODO: add configure mtk
 		break;
+	case GPS_CONFIGURE_NMEA:
+		//TODO: add configure nmea
+		break;
 	case SENSORIOCRESET:
-		//TODO: add reset
+		cmd_reset();
 		break;
 	}
+
+	return ret;
 }
 
 void
-GPS::start()
+GPS::recv()
 {
-	/* reset the report ring and state machine */
-	_collect_phase = false;
-	_measure_phase = 0;
-	_oldest_report = _next_report = 0;
+	uint8_t buf[32];
+	int count;
 
-	/* schedule a cycle to start things */
-	work_queue(HPWORK, &_work, (worker_t)&GPS::cycle_trampoline, this, 1);
+	/*
+	 * We are here because poll says there is some data, so this
+	 * won't block even on a blocking device.  If more bytes are
+	 * available, we'll go back to poll() again...
+	 */
+	count = ::read(_serial_fd, buf, sizeof(buf));
+
+	/* pass received bytes to the packet decoder */
+	for (int i = 0; i < count; i++) {
+		_messages_received += _Helper->parse(buf[i]);
+	}
 }
 
 void
-GPS::stop()
+GPS::config()
 {
-	work_cancel(HPWORK, &_work);
-}
+	int length = 0;
 
-void
-GPS::cycle_trampoline(void *arg)
-{
-	GPS *dev = (GPS *)arg;
-
-	dev->cycle();
-}
-
-void
-GPS::cycle()
-{
-	/* collection phase? */
-	if (_collect_phase) {
-
-		/* perform collection */
-		if (OK != collect()) {
-			log("collection error");
-			/* reset the collection state machine and try again */
-			start();
-			return;
-		}
-
-		/* next phase is measurement */
-		_collect_phase = false;
-
-		/*
-		 * Is there a collect->measure gap?
-		 * Don't inject one after temperature measurements, so we can keep
-		 * doing pressure measurements at something close to the desired rate.
-		 */
-//		if ((_measure_phase != 0) &&
-//			(_measure_ticks > USEC2TICK(MS5611_CONVERSION_INTERVAL))) {
-//
-//			/* schedule a fresh cycle call when we are ready to measure again */
-//			work_queue(HPWORK,
-//				   &_work,
-//				   (worker_t)&MS5611::cycle_trampoline,
-//				   this,
-//				   _measure_ticks - USEC2TICK(MS5611_CONVERSION_INTERVAL));
-//
-//			return;
-//		}
+	switch (_mode) {
+	case GPS_DRIVER_MODE_UBX:
+		_Helper->configure(_send_buffer, length, SEND_BUFFER_LENGTH);
+		break;
+	default:
+		break;
 	}
 
-	/* measurement phase */
-	if (OK != measure())
-		log("measure error");
-
-	/* next phase is collection */
-	_collect_phase = true;
-
-	/* schedule a fresh cycle call when the measurement is done */
-	work_queue(HPWORK,
-		   &_work,
-		   (worker_t)&MS5611::cycle_trampoline,
-		   this,
-		   USEC2TICK(MS5611_CONVERSION_INTERVAL));
-
+	if(length != ::write(_serial_fd, _send_buffer, length)) {
+		debug("write config failed");
+		return;
+	}
 }
 
-int
-GPS::measure()
+void
+GPS::task_main_trampoline(void *arg)
 {
-
+	g_dev->task_main();
 }
 
-int
-GPS::collect()
+void
+GPS::task_main()
 {
+	log("starting");
 
+	/* open the serial port */
+	_serial_fd = ::open("/dev/ttyS3", O_RDWR);
+
+	if (_serial_fd < 0) {
+		log("failed to open serial port: %d", errno);
+		goto out;
+	}
+
+	/* 38400bps, no parity, one stop bit */
+	{
+		struct termios t;
+
+		tcgetattr(_serial_fd, &t);
+		cfsetspeed(&t, 38400);
+		t.c_cflag &= ~(CSTOPB | PARENB);
+		tcsetattr(_serial_fd, TCSANOW, &t);
+	}
+
+	switch (_mode) {
+	case GPS_DRIVER_MODE_UBX:
+		_Helper = new UBX();
+		break;
+	default:
+		break;
+	}
+
+
+	/* poll descriptor */
+	pollfd fds[1];
+	fds[0].fd = _serial_fd;
+	fds[0].events = POLLIN;
+
+	debug("ready");
+
+	/* lock against the ioctl handler */
+	lock();
+
+	/* loop handling received serial bytes */
+	while (!_task_should_exit) {
+
+		/* 1st: try ubx */
+
+		/* 2nd: try mtk19 */
+
+		/* 3dr: try mtk16 */
+
+		/* 4th: try nmea */
+
+		/* sleep waiting for data, but no more than 100ms */
+		unlock();
+		int ret = ::poll(fds, sizeof(fds) / sizeof(fds[0]), 100);
+		lock();
+
+		/* this would be bad... */
+		if (ret < 0) {
+			log("poll error %d", errno);
+			continue;
+		} else if (ret == 0) {
+			_healthy = false;
+		} else if (ret > 0) {
+			/* if we have new data from GPS, go handle it */
+			if (fds[0].revents & POLLIN) {
+				recv();
+			}
+		}
+
+		if (!_healthy) {
+			config();
+		}
+	}
+
+out:
+	debug("exiting");
+
+	/* kill the HX stream */
+//	if (_io_stream != nullptr)
+//		hx_stream_free(_io_stream);
+
+	::close(_serial_fd);
+
+	/* tell the dtor that we are exiting */
+	_task = -1;
+	_exit(0);
 }
 
-int
+void
 GPS::cmd_reset()
 {
-
+	_healthy = false;
 }
 
 void
@@ -363,6 +396,7 @@ namespace gps
 GPS	*g_dev;
 
 void	start();
+void	stop();
 void	test();
 void	reset();
 void	info();
@@ -406,6 +440,15 @@ fail:
 	errx(1, "driver start failed");
 }
 
+void
+stop()
+{
+	delete g_dev;
+	g_dev = nullptr;
+
+	exit(0);
+}
+
 /**
  * Perform some basic functional tests on the driver;
  * make sure we can collect data from the sensor in polled
@@ -436,7 +479,7 @@ reset()
 }
 
 /**
- * Print a little info about the driver.
+ * Print the status of the driver.
  */
 void
 info()
@@ -452,6 +495,7 @@ info()
 
 } // namespace
 
+
 int
 gps_main(int argc, char *argv[])
 {
@@ -461,6 +505,8 @@ gps_main(int argc, char *argv[])
 	if (!strcmp(argv[1], "start"))
 		gps::start();
 
+	if (!strcmp(argv[1], "stop"))
+		gps::stop();
 	/*
 	 * Test the driver/device.
 	 */
@@ -474,10 +520,10 @@ gps_main(int argc, char *argv[])
 		gps::reset();
 
 	/*
-	 * Print driver information.
+	 * Print driver status.
 	 */
-	if (!strcmp(argv[1], "info"))
+	if (!strcmp(argv[1], "status"))
 		gps::info();
 
-	errx(1, "unrecognized command, try 'start', 'test', 'reset' or 'info'");
+	errx(1, "unrecognized command, try 'start', 'stop', 'test', 'reset' or 'status'");
 }

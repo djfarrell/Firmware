@@ -1,6 +1,8 @@
 /****************************************************************************
  *
- *   Copyright (C) 2012 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2008-2012 PX4 Development Team. All rights reserved.
+ *   Author: Thomas Gubler <thomasgubler@student.ethz.ch>
+ *           Julian Oes <joes@student.ethz.ch>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,49 +33,16 @@
  *
  ****************************************************************************/
 
-/**
- * @file GPS driver interface.
- */
+/* @file U-Blox protocol definitions */
 
-#ifndef _DRV_GPS_H
-#define _DRV_GPS_H
+#ifndef GPS_HELPER_H
 
-#include <stdint.h>
-#include <sys/ioctl.h>
+class GPS_Helper
+{
+public:
+	~GPS_Helper();
+	virtual void				configure(uint8_t*, int&, const unsigned) = 0;
+	virtual unsigned 			parse(uint8_t) = 0;
+};
 
-#include "drv_sensor.h"
-#include "drv_orb_dev.h"
-
-#define GPS_DEVICE_PATH	"/dev/gps"
-
-typedef enum {
-	GPS_DRIVER_MODE_UBX = 0,
-	GPS_DRIVER_MODE_MTK19,
-	GPS_DRIVER_MODE_MTK16,
-	GPS_DRIVER_MODE_NMEA,
-} gps_driver_mode_t;
-
-
-
-
-/*
- * ObjDev tag for GPS data.
- */
-ORB_DECLARE(gps);
-
-/*
- * ioctl() definitions
- */
-#define _GPSIOCBASE			(0x2800)            //TODO: arbitrary choice...
-#define _GPSIOC(_n)		(_IOC(_GPSIOCBASE, _n))
-
-/** configure ubx mode */
-#define GPS_CONFIGURE_UBX	_GPSIOC(0)
-
-/** configure mtk mode */
-#define GPS_CONFIGURE_MTK	_GPSIOC(1)
-
-/** configure mtk mode */
-#define GPS_CONFIGURE_NMEA	_GPSIOC(2)
-
-#endif /* _DRV_GPS_H */
+#endif /* GPS_HELPER_H */

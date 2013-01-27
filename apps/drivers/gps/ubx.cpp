@@ -1,6 +1,8 @@
 /****************************************************************************
  *
  *   Copyright (C) 2012 PX4 Development Team. All rights reserved.
+ *   Author: Thomas Gubler <thomasgubler@student.ethz.ch>
+ *           Julian Oes <joes@student.ethz.ch>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,49 +33,55 @@
  *
  ****************************************************************************/
 
-/**
- * @file GPS driver interface.
- */
-
-#ifndef _DRV_GPS_H
-#define _DRV_GPS_H
-
-#include <stdint.h>
-#include <sys/ioctl.h>
-
-#include "drv_sensor.h"
-#include "drv_orb_dev.h"
-
-#define GPS_DEVICE_PATH	"/dev/gps"
-
-typedef enum {
-	GPS_DRIVER_MODE_UBX = 0,
-	GPS_DRIVER_MODE_MTK19,
-	GPS_DRIVER_MODE_MTK16,
-	GPS_DRIVER_MODE_NMEA,
-} gps_driver_mode_t;
+/* @file U-Blox protocol implementation */
 
 
+#include <unistd.h>
+#include <assert.h>
+#include <uORB/uORB.h>
+#include <uORB/topics/vehicle_gps_position.h>
+#include <drivers/drv_gps.h>
+
+#include "ubx.h"
 
 
-/*
- * ObjDev tag for GPS data.
- */
-ORB_DECLARE(gps);
+UBX::UBX()
+{
+	_decode_state = UBX_DECODE_UNINIT;
+	_rx_count = 0;
+}
 
-/*
- * ioctl() definitions
- */
-#define _GPSIOCBASE			(0x2800)            //TODO: arbitrary choice...
-#define _GPSIOC(_n)		(_IOC(_GPSIOCBASE, _n))
+UBX::~UBX()
+{
+}
 
-/** configure ubx mode */
-#define GPS_CONFIGURE_UBX	_GPSIOC(0)
+void
+UBX::configure(uint8_t* buffer, int& length, const unsigned max_length)
+{
 
-/** configure mtk mode */
-#define GPS_CONFIGURE_MTK	_GPSIOC(1)
+	int current_gps_speed = 38400; //XXX fix this
 
-/** configure mtk mode */
-#define GPS_CONFIGURE_NMEA	_GPSIOC(2)
+	assert(sizeof(type_gps_bin_cfg_prt_packet_t) <= max_length);
 
-#endif /* _DRV_GPS_H */
+	type_gps_bin_cfg_prt_packet_t* packet = (type_gps_bin_cfg_prt_packet_t*)buffer;
+
+	packet->clsID		= UBX_CLASS_CFG;
+	packet->msgID		= UBX_MESSAGE_CFG_PRT;
+	packet->length		= UBX_CFG_PRT_LENGTH;
+	packet->portID		= UBX_CFG_PRT_PAYLOAD_PORTID;
+	packet->mode		= UBX_CFG_PRT_PAYLOAD_MODE;
+	packet->baudRate	= current_gps_speed;
+	packet->inProtoMask	= UBX_CFG_PRT_PAYLOAD_INPROTOMASK;
+	packet->outProtoMask= UBX_CFG_PRT_PAYLOAD_OUTPROTOMASK;
+
+	//TODO: set CRC here
+
+	length = sizeof(type_gps_bin_cfg_prt_packet_t);
+}
+
+unsigned
+UBX::parse(uint8_t b)
+{
+
+	return 0;
+}
