@@ -51,7 +51,6 @@ UBX::UBX() :
 _config_state(UBX_CONFIG_STATE_PRT)
 {
 	decodeInit();
-	printf("UBX object created\n");
 }
 
 UBX::~UBX()
@@ -59,17 +58,16 @@ UBX::~UBX()
 }
 
 void
-UBX::configure(bool& config_needed, uint8_t* buffer, int& length, const unsigned max_length)
+UBX::configure(bool& config_needed, bool& baudrate_changed, unsigned& baudrate, uint8_t* buffer, int& length, const unsigned max_length)
 {
-	int current_gps_speed = 38400; //XXX fix this
-
+	/* make sure the buffer to write the message is long enough */
 	assert(sizeof(type_gps_bin_cfg_prt_packet_t)+2 <= max_length);
 
 	if (_config_state == UBX_CONFIG_STATE_CONFIGURED) {
 		config_needed = false;
 		length = 0;
 	} else if (_config_state == UBX_CONFIG_STATE_PRT) {
-		/* send a CFT-PRT message to define set ubx protocol and and baudrate */
+		/* send a CFT-PRT message to define set ubx protocol and leave the baudrate as is, we just want an ACK-ACK from this */
 		type_gps_bin_cfg_prt_packet_t cfg_prt_packet;
 		memset(&cfg_prt_packet, 0, sizeof(cfg_prt_packet));
 
@@ -78,7 +76,7 @@ UBX::configure(bool& config_needed, uint8_t* buffer, int& length, const unsigned
 		cfg_prt_packet.length		= UBX_CFG_PRT_LENGTH;
 		cfg_prt_packet.portID		= UBX_CFG_PRT_PAYLOAD_PORTID;
 		cfg_prt_packet.mode			= UBX_CFG_PRT_PAYLOAD_MODE;
-		cfg_prt_packet.baudRate		= current_gps_speed;
+		cfg_prt_packet.baudRate		= baudrate;
 		cfg_prt_packet.inProtoMask	= UBX_CFG_PRT_PAYLOAD_INPROTOMASK;
 		cfg_prt_packet.outProtoMask	= UBX_CFG_PRT_PAYLOAD_OUTPROTOMASK;
 
@@ -89,7 +87,38 @@ UBX::configure(bool& config_needed, uint8_t* buffer, int& length, const unsigned
 		memcpy(&(buffer[2]), &cfg_prt_packet, sizeof(cfg_prt_packet));
 		length = sizeof(cfg_prt_packet)+2;
 
+	} else if (_config_state == UBX_CONFIG_STATE_PRT_NEW_BAUDRATE) {
+		/* send a CFT-PRT message to define set ubx protocol and and baudrate, now let's try to switch the baudrate */
+		type_gps_bin_cfg_prt_packet_t cfg_prt_packet;
+		memset(&cfg_prt_packet, 0, sizeof(cfg_prt_packet));
+
+		cfg_prt_packet.clsID		= UBX_CLASS_CFG;
+		cfg_prt_packet.msgID		= UBX_MESSAGE_CFG_PRT;
+		cfg_prt_packet.length		= UBX_CFG_PRT_LENGTH;
+		cfg_prt_packet.portID		= UBX_CFG_PRT_PAYLOAD_PORTID;
+		cfg_prt_packet.mode			= UBX_CFG_PRT_PAYLOAD_MODE;
+		cfg_prt_packet.baudRate		= UBX_CFG_PRT_PAYLOAD_BAUDRATE;
+		cfg_prt_packet.inProtoMask	= UBX_CFG_PRT_PAYLOAD_INPROTOMASK;
+		cfg_prt_packet.outProtoMask	= UBX_CFG_PRT_PAYLOAD_OUTPROTOMASK;
+
+		addChecksumToMessage((uint8_t*)&cfg_prt_packet, sizeof(cfg_prt_packet));
+
+		buffer[0] = UBX_SYNC1;
+		buffer[1] = UBX_SYNC2;
+		memcpy(&(buffer[2]), &cfg_prt_packet, sizeof(cfg_prt_packet));
+		length = sizeof(cfg_prt_packet)+2;
+
+		/* detection when the baudrate has been changed in the first step */
+		if (UBX_CFG_PRT_PAYLOAD_BAUDRATE != baudrate) {
+			/* set a flag and exit */
+			baudrate=UBX_CFG_PRT_PAYLOAD_BAUDRATE;
+			baudrate_changed = true;
+			_config_state = UBX_CONFIG_STATE_RATE;
+			return;
+		}
+
 	} else if (_config_state == UBX_CONFIG_STATE_RATE) {
+
 		/* send a CFT-RATE message to define update rate */
 		type_gps_bin_cfg_rate_packet_t cfg_rate_packet;
 		memset(&cfg_rate_packet, 0, sizeof(cfg_rate_packet));
@@ -107,9 +136,6 @@ UBX::configure(bool& config_needed, uint8_t* buffer, int& length, const unsigned
 		buffer[1] = UBX_SYNC2;
 		memcpy(&(buffer[2]), &cfg_rate_packet, sizeof(cfg_rate_packet));
 		length = sizeof(cfg_rate_packet)+2;
-		int i;
-		for (i=0; i<length; i++)
-			printf("%x ", buffer[i]);
 
 	} else if (_config_state == UBX_CONFIG_STATE_NAV5) {
 		/* send a NAV5 message to set the options for the internal estimator */
@@ -187,13 +213,14 @@ int
 UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 {
 	int ret = 0;
-//	printf("Received char: %c\n", b);
+	printf("Received char: %c\n", b);
 
 	switch (_decode_state) {
 		/* First, look for sync1 */
 		case UBX_DECODE_UNINIT:
 			if (b == UBX_SYNC1) {
 				_decode_state = UBX_DECODE_GOT_SYNC1;
+				printf("Got sync1\n");
 			}
 			break;
 		/* Second, look for sync2 */
@@ -649,6 +676,10 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 
 								switch (_config_state) {
 									case UBX_CONFIG_STATE_PRT:
+										if (packet->clsID == UBX_CLASS_CFG && packet->msgID == UBX_MESSAGE_CFG_PRT)
+											_config_state = UBX_CONFIG_STATE_PRT_NEW_BAUDRATE;
+										break;
+									case UBX_CONFIG_STATE_PRT_NEW_BAUDRATE:
 										if (packet->clsID == UBX_CLASS_CFG && packet->msgID == UBX_MESSAGE_CFG_PRT)
 											_config_state = UBX_CONFIG_STATE_RATE;
 										break;

@@ -106,15 +106,16 @@ private:
 
 	int					_task_should_exit;
 	int					_serial_fd;		///< serial interface to GPS
-	int					_baudrate;
+	unsigned			_baudrate;
+	unsigned			_baudrates_to_try[4];
 	uint8_t				_send_buffer[SEND_BUFFER_LENGTH];
 	perf_counter_t		_sample_perf;
 	perf_counter_t		_comms_errors;
 	perf_counter_t		_buffer_overflows;
-
 	volatile int		_task;		///< worker task
 
 	bool				_config_needed;
+	bool 				_baudrate_changed;
 	bool				_mode_changed;
 	bool				_healthy;
 	gps_driver_mode_t	_mode;
@@ -138,6 +139,8 @@ private:
 	 * worker task
 	 */
 	void			task_main(void);
+
+	void			set_baudrate(void);
 
 	/**
 	 * Send a reset command to the GPS
@@ -163,8 +166,9 @@ GPS	*g_dev;
 GPS::GPS() :
 	CDev("gps", GPS_DEVICE_PATH),
 	_task_should_exit(false),
-	_baudrate(38400),
+	_baudrates_to_try({9600, 38400, 57600, 115200}),
 	_config_needed(true),
+	_baudrate_changed(false),
 	_mode_changed(true),
 	_healthy(false),
 	_mode(GPS_DRIVER_MODE_UBX),
@@ -286,20 +290,26 @@ GPS::config()
 {
 	int length = 0;
 
-	switch (_mode) {
-	case GPS_DRIVER_MODE_UBX:
-		_Helper->configure(_config_needed, _send_buffer, length, SEND_BUFFER_LENGTH);
-		break;
-	default:
-		break;
-	}
+	_Helper->configure(_config_needed, _baudrate_changed, _baudrate, _send_buffer, length, SEND_BUFFER_LENGTH);
 
+	/* the message needs to be sent at the old baudrate */
 	if (length > 0) {
 		if (length != ::write(_serial_fd, _send_buffer, length)) {
 			debug("write config failed");
 			return;
 		}
+		printf("Wrote config at baud: %d\n", _baudrate);
 	}
+
+	if (_baudrate_changed) {
+		fflush((FILE*)&_serial_fd);
+		usleep(10000);
+		set_baudrate();
+		usleep(10000);
+		_baudrate_changed = false;
+	}
+
+
 }
 
 void
@@ -313,6 +323,8 @@ GPS::task_main()
 {
 	log("starting");
 
+	_baudrate = _baudrates_to_try[0];
+
 	_report_pub = orb_advertise(ORB_ID(vehicle_gps_position), &_report);
 
 	/* open the serial port */
@@ -323,24 +335,23 @@ GPS::task_main()
 		goto out;
 	}
 
-	/* 38400bps, no parity, one stop bit */
-	{
-		struct termios t;
+	set_baudrate();
 
-		tcgetattr(_serial_fd, &t);
-		cfsetspeed(&t, 38400);
-		t.c_cflag &= ~(CSTOPB | PARENB);
-		tcsetattr(_serial_fd, TCSANOW, &t);
-	}
-
-
+//	{
+//		/* no parity, one stop bit */
+//			struct termios t;
+//
+//			tcgetattr(_serial_fd, &t);
+//			cfsetspeed(&t, _baudrate);
+//			t.c_cflag &= ~(CSTOPB | PARENB);
+//			tcsetattr(_serial_fd, TCSANOW, &t);
+//	}
 
 
 	/* poll descriptor */
 	pollfd fds[1];
 	fds[0].fd = _serial_fd;
 	fds[0].events = POLLIN;
-
 	debug("ready");
 
 	/* lock against the ioctl handler */
@@ -374,7 +385,7 @@ GPS::task_main()
 			_mode_changed = false;
 		}
 
-		/* sleep waiting for data, but no more than 100ms */
+		/* sleep waiting for data, but no more than 1000ms */
 		unlock();
 		int ret = ::poll(fds, sizeof(fds) / sizeof(fds[0]), 100);
 		lock();
@@ -382,7 +393,6 @@ GPS::task_main()
 		/* this would be bad... */
 		if (ret < 0) {
 			log("poll error %d", errno);
-			continue;
 		} else if (ret == 0) {
 			_healthy = false;
 		} else if (ret > 0) {
@@ -409,6 +419,23 @@ out:
 	/* tell the dtor that we are exiting */
 	_task = -1;
 	_exit(0);
+}
+
+void
+GPS::set_baudrate()
+{
+	printf("change baudrate to %d\n", _baudrate);
+
+	/* no parity, one stop bit */
+	struct termios t;
+
+	if (tcgetattr(_serial_fd, &t) != 0)
+		printf("tcgetattr fail\n");
+	if (cfsetspeed(&t, _baudrate) != 0)
+		printf("cfsetspeed fail\n");
+	t.c_cflag &= ~(CSTOPB | PARENB);
+	if (tcsetattr(_serial_fd, TCSANOW, &t) != 0)
+		printf("tcsetattr_fail\n");
 }
 
 void

@@ -317,6 +317,7 @@ typedef struct {
 
 typedef enum {
 	UBX_CONFIG_STATE_PRT = 0,
+	UBX_CONFIG_STATE_PRT_NEW_BAUDRATE,
 	UBX_CONFIG_STATE_RATE,
 	UBX_CONFIG_STATE_NAV5,
 	UBX_CONFIG_STATE_MSG_NAV_POSLLH,
@@ -392,7 +393,7 @@ public:
 	UBX();
 	~UBX();
 
-	void				configure(bool&, uint8_t*, int&, const unsigned);
+	void				configure(bool&, bool&, unsigned&, uint8_t*, int&, const unsigned);
 	int 				parse(uint8_t, struct vehicle_gps_position_s*);
 
 private:
