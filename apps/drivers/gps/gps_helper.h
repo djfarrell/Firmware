@@ -40,9 +40,8 @@
 class GPS_Helper
 {
 public:
-	~GPS_Helper();
-	virtual void				configure(uint8_t*, int&, const unsigned) = 0;
-	virtual unsigned 			parse(uint8_t) = 0;
+	virtual void			configure(bool&, uint8_t*, int&, const unsigned) = 0;
+	virtual int 			parse(uint8_t, struct vehicle_gps_position_s*) = 0;
 };
 
 #endif /* GPS_HELPER_H */

@@ -40,9 +40,10 @@
 
 #include "gps_helper.h"
 
+#define UBX_NO_OF_MESSAGES 7								/**< Read 7 UBX GPS messages */
 
-#define UBX_SYNC_1 0xB5
-#define UBX_SYNC_2 0x62
+#define UBX_SYNC1 0xB5
+#define UBX_SYNC2 0x62
 
 //UBX Protocol definitions (this is the subset of the messages that are parsed)
 #define UBX_CLASS_NAV 0x01
@@ -61,6 +62,7 @@
 #define UBX_MESSAGE_CFG_PRT 0x00
 #define UBX_MESSAGE_CFG_NAV5 0x24
 #define UBX_MESSAGE_CFG_MSG 0x01
+#define UBX_MESSAGE_CFG_RATE 0x08
 
 #define UBX_CFG_PRT_LENGTH 20
 #define UBX_CFG_PRT_PAYLOAD_PORTID 0x01         /**< port 1 */
@@ -69,13 +71,19 @@
 #define UBX_CFG_PRT_PAYLOAD_INPROTOMASK 0x01    /**< ubx in */
 #define UBX_CFG_PRT_PAYLOAD_OUTPROTOMASK 0x01   /**< ubx out */
 
+#define UBX_CFG_RATE_LENGTH 6
+#define UBX_CFG_RATE_PAYLOAD_MEASRATE 200		/**< 200ms for 5Hz */
+#define UBX_CFG_RATE_PAYLOAD_NAVRATE 1			/**< cannot be changed */
+#define UBX_CFG_RATE_PAYLOAD_TIMEREF 0			/**< 0: UTC, 1: GPS time */
+
+
 #define UBX_CFG_NAV5_LENGTH 36
 #define UBX_CFG_NAV5_PAYLOAD_MASK 0x0001		/**< only update dynamic model and fix mode */
 #define UBX_CFG_NAV5_PAYLOAD_DYNMODEL 7			/**< 0: portable, 2: stationary, 3: pedestrian, 4: automotive, 5: sea, 6: airborne <1g, 7: airborne <2g, 8: airborne <4g */
 #define UBX_CFG_NAV5_PAYLOAD_FIXMODE 2          /**< 1: 2D only, 2: 3D only, 3: Auto 2D/3D */
 
 #define UBX_CFG_MSG_LENGTH 8
-#define UBX_CFG_MSG_PAYLOAD_RATE {0x00, 0x01, 0x00, 0x00, 0x00, 0x00} /**< UART1 chosen */
+#define UBX_CFG_MSG_PAYLOAD_RATE1 0x01 			/**< {0x00, 0x01, 0x00, 0x00, 0x00, 0x00} UART1 chosen */
 
 
 // ************
@@ -251,12 +259,20 @@ typedef struct {
 	uint16_t outProtoMask;
 	uint16_t flags;
 	uint16_t pad;
-
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_cfg_prt_packet;
+} type_gps_bin_cfg_prt_packet_t;
 
-typedef type_gps_bin_cfg_prt_packet type_gps_bin_cfg_prt_packet_t;
+typedef struct {
+	uint8_t clsID;
+	uint8_t msgID;
+	uint16_t length;
+	uint16_t measRate;
+	uint16_t navRate;
+	uint16_t timeRef;
+	uint8_t ck_a;
+	uint8_t ck_b;
+} type_gps_bin_cfg_rate_packet_t;
 
 typedef struct {
 	uint8_t clsID;
@@ -281,9 +297,7 @@ typedef struct {
 
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_cfg_nav5_packet;
-
-typedef type_gps_bin_cfg_nav5_packet type_gps_bin_cfg_nav5_packet_t;
+} type_gps_bin_cfg_nav5_packet_t;
 
 typedef struct {
 	uint8_t clsID;
@@ -295,37 +309,35 @@ typedef struct {
 
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_cfg_msg_packet;
-
-typedef type_gps_bin_cfg_msg_packet type_gps_bin_cfg_msg_packet_t;
+} type_gps_bin_cfg_msg_packet_t;
 
 
 // END the structures of the binary packets
 // ************
 
-enum UBX_CONFIG_STATE {
-	UBX_CONFIG_STATE_NONE = 0,
-	UBX_CONFIG_STATE_PRT = 1,
-	UBX_CONFIG_STATE_NAV5 = 2,
-	UBX_CONFIG_STATE_MSG_NAV_POSLLH = 3,
-	UBX_CONFIG_STATE_MSG_NAV_TIMEUTC = 4,
-	UBX_CONFIG_STATE_MSG_NAV_DOP = 5,
-	UBX_CONFIG_STATE_MSG_NAV_SVINFO = 6,
-	UBX_CONFIG_STATE_MSG_NAV_SOL = 7,
-	UBX_CONFIG_STATE_MSG_NAV_VELNED = 8,
-	UBX_CONFIG_STATE_MSG_RXM_SVSI = 9,
-	UBX_CONFIG_STATE_CONFIGURED = 10
-};
+typedef enum {
+	UBX_CONFIG_STATE_PRT = 0,
+	UBX_CONFIG_STATE_RATE,
+	UBX_CONFIG_STATE_NAV5,
+	UBX_CONFIG_STATE_MSG_NAV_POSLLH,
+	UBX_CONFIG_STATE_MSG_NAV_TIMEUTC,
+	UBX_CONFIG_STATE_MSG_NAV_DOP,
+	UBX_CONFIG_STATE_MSG_NAV_SVINFO,
+	UBX_CONFIG_STATE_MSG_NAV_SOL,
+	UBX_CONFIG_STATE_MSG_NAV_VELNED,
+	UBX_CONFIG_STATE_MSG_RXM_SVSI,
+	UBX_CONFIG_STATE_CONFIGURED
+} ubx_config_state_t;
 
-enum UBX_MESSAGE_CLASSES {
+typedef enum {
 	CLASS_UNKNOWN = 0,
 	NAV = 1,
 	RXM = 2,
 	ACK = 3,
 	CFG = 4
-};
+} ubx_message_class_t;
 
-enum UBX_MESSAGE_IDS {
+typedef enum {
 	//these numbers do NOT correspond to the message id numbers of the ubx protocol
 	ID_UNKNOWN = 0,
 	NAV_POSLLH = 1,
@@ -338,7 +350,7 @@ enum UBX_MESSAGE_IDS {
 	CFG_NAV5 = 8,
 	ACK_ACK = 9,
 	ACK_NAK = 10
-};
+} ubx_message_id_t;
 
 typedef enum {
 	UBX_DECODE_UNINIT = 0,
@@ -372,7 +384,7 @@ typedef enum {
 //typedef type_gps_bin_ubx_state gps_bin_ubx_state_t;
 #pragma pack(pop)
 
-#define RECV_BUFFER_SIZE 128
+#define RECV_BUFFER_SIZE 500 //The NAV-SOL messages really need such a big buffer
 
 class UBX : public GPS_Helper
 {
@@ -380,14 +392,23 @@ public:
 	UBX();
 	~UBX();
 
-	virtual void				configure(uint8_t*, int&, const unsigned);
-	virtual unsigned 			parse(uint8_t);
+	void				configure(bool&, uint8_t*, int&, const unsigned);
+	int 				parse(uint8_t, struct vehicle_gps_position_s*);
 
 private:
-
+	void				decodeInit(void);
+	void				addByteToChecksum(uint8_t);
+	void				addChecksumToMessage(uint8_t*, const unsigned);
+	ubx_config_state_t	_config_state;
 	ubx_decode_state_t	_decode_state;
-	uint8_t				_recv_buffer[RECV_BUFFER_SIZE];
+	uint8_t				_rx_buffer[RECV_BUFFER_SIZE];
 	unsigned			_rx_count;
+	uint8_t 			_rx_ck_a;
+	uint8_t				_rx_ck_b;
+	ubx_message_class_t _message_class;
+	ubx_message_id_t	_message_id;
+	unsigned			_payload_size;
+	uint64_t 			_last_message_timestamps[UBX_NO_OF_MESSAGES];
 };
 
 #endif /* UBX_H_ */

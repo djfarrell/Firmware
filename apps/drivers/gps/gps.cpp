@@ -115,13 +115,15 @@ private:
 	volatile int		_task;		///< worker task
 
 	bool				_config_needed;
+	bool				_mode_changed;
 	bool				_healthy;
 	gps_driver_mode_t	_mode;
 	unsigned 			_messages_received;
 
-	GPS_Helper*			_Helper;
+	GPS_Helper*			_Helper;	///< Class for either UBX, MTK or NMEA helper
 
-	struct vehicle_gps_position_s	*_reports;
+	struct vehicle_gps_position_s	*_report;
+	orb_advert_t		_report_pub;
 
 	orb_advert_t		_gps_topic;
 
@@ -163,11 +165,12 @@ GPS::GPS() :
 	_task_should_exit(false),
 	_baudrate(38400),
 	_config_needed(true),
+	_mode_changed(true),
 	_healthy(false),
 	_mode(GPS_DRIVER_MODE_UBX),
 	_messages_received(0),
 	_Helper(nullptr),
-	_reports(nullptr)
+	_report(nullptr)
 {
 	/* we need this potentially before it could be set in task_main */
 	g_dev = this;
@@ -225,13 +228,28 @@ GPS::ioctl(struct file *filp, int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case GPS_CONFIGURE_UBX:
-		//TODO: add configure ubx
+		if (_mode != GPS_DRIVER_MODE_UBX) {
+			_mode = GPS_DRIVER_MODE_UBX;
+			_mode_changed = true;
+		}
 		break;
-	case GPS_CONFIGURE_MTK:
-		//TODO: add configure mtk
+	case GPS_CONFIGURE_MTK19:
+		if (_mode != GPS_DRIVER_MODE_MTK19) {
+			_mode = GPS_DRIVER_MODE_MTK19;
+			_mode_changed = true;
+		}
+		break;
+	case GPS_CONFIGURE_MTK16:
+		if (_mode != GPS_DRIVER_MODE_MTK16) {
+			_mode = GPS_DRIVER_MODE_MTK16;
+			_mode_changed = true;
+		}
 		break;
 	case GPS_CONFIGURE_NMEA:
-		//TODO: add configure nmea
+		if (_mode != GPS_DRIVER_MODE_NMEA) {
+			_mode = GPS_DRIVER_MODE_NMEA;
+			_mode_changed = true;
+		}
 		break;
 	case SENSORIOCRESET:
 		cmd_reset();
@@ -256,7 +274,10 @@ GPS::recv()
 
 	/* pass received bytes to the packet decoder */
 	for (int i = 0; i < count; i++) {
-		_messages_received += _Helper->parse(buf[i]);
+		_messages_received += _Helper->parse(buf[i], _report);
+	}
+	if (_messages_received > 0) {
+		orb_publish(ORB_ID(vehicle_gps_position), _report_pub, &_report);
 	}
 }
 
@@ -267,15 +288,17 @@ GPS::config()
 
 	switch (_mode) {
 	case GPS_DRIVER_MODE_UBX:
-		_Helper->configure(_send_buffer, length, SEND_BUFFER_LENGTH);
+		_Helper->configure(_config_needed, _send_buffer, length, SEND_BUFFER_LENGTH);
 		break;
 	default:
 		break;
 	}
 
-	if(length != ::write(_serial_fd, _send_buffer, length)) {
-		debug("write config failed");
-		return;
+	if (length > 0) {
+		if (length != ::write(_serial_fd, _send_buffer, length)) {
+			debug("write config failed");
+			return;
+		}
 	}
 }
 
@@ -289,6 +312,8 @@ void
 GPS::task_main()
 {
 	log("starting");
+
+	_report_pub = orb_advertise(ORB_ID(vehicle_gps_position), &_report);
 
 	/* open the serial port */
 	_serial_fd = ::open("/dev/ttyS3", O_RDWR);
@@ -308,13 +333,7 @@ GPS::task_main()
 		tcsetattr(_serial_fd, TCSANOW, &t);
 	}
 
-	switch (_mode) {
-	case GPS_DRIVER_MODE_UBX:
-		_Helper = new UBX();
-		break;
-	default:
-		break;
-	}
+
 
 
 	/* poll descriptor */
@@ -330,13 +349,30 @@ GPS::task_main()
 	/* loop handling received serial bytes */
 	while (!_task_should_exit) {
 
-		/* 1st: try ubx */
+		if (_mode_changed) {
+			if (_Helper != nullptr) {
+				delete(_Helper);
+				_Helper = nullptr; // XXX is this needed?
+			}
 
-		/* 2nd: try mtk19 */
-
-		/* 3dr: try mtk16 */
-
-		/* 4th: try nmea */
+			switch (_mode) {
+			case GPS_DRIVER_MODE_UBX:
+				_Helper = new UBX();
+				break;
+			case GPS_DRIVER_MODE_MTK19:
+				//_Helper = new MTK19();
+				break;
+			case GPS_DRIVER_MODE_MTK16:
+				//_Helper = new MTK16();
+				break;
+			case GPS_DRIVER_MODE_NMEA:
+				//_Helper = new NMEA();
+				break;
+			default:
+				break;
+			}
+			_mode_changed = false;
+		}
 
 		/* sleep waiting for data, but no more than 100ms */
 		unlock();
@@ -356,7 +392,7 @@ GPS::task_main()
 			}
 		}
 
-		if (!_healthy) {
+		if (/*!_healthy || */_config_needed) {
 			config();
 		}
 	}

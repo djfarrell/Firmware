@@ -71,9 +71,10 @@ ORB_DECLARE(gps);
 #define GPS_CONFIGURE_UBX	_GPSIOC(0)
 
 /** configure mtk mode */
-#define GPS_CONFIGURE_MTK	_GPSIOC(1)
+#define GPS_CONFIGURE_MTK19	_GPSIOC(1)
+#define GPS_CONFIGURE_MTK16	_GPSIOC(2)
 
 /** configure mtk mode */
-#define GPS_CONFIGURE_NMEA	_GPSIOC(2)
+#define GPS_CONFIGURE_NMEA	_GPSIOC(3)
 
 #endif /* _DRV_GPS_H */
