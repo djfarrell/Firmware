@@ -363,25 +363,6 @@ typedef enum {
 	UBX_DECODE_GOT_LENGTH2 = 6
 } ubx_decode_state_t;
 
-//typedef struct {
-//	union {
-//		uint16_t ck;
-//		struct {
-//			uint8_t ck_a;
-//			uint8_t ck_b;
-//		};
-//	};
-//	enum UBX_DECODE_STATES decode_state;
-//	bool print_errors;
-//	int16_t rx_count;
-//	uint16_t payload_size;
-//
-//	enum UBX_MESSAGE_CLASSES  message_class;
-//	enum UBX_MESSAGE_IDS message_id;
-//	uint64_t last_message_timestamps[UBX_NO_OF_MESSAGES];
-//
-//} type_gps_bin_ubx_state;
-
 //typedef type_gps_bin_ubx_state gps_bin_ubx_state_t;
 #pragma pack(pop)
 

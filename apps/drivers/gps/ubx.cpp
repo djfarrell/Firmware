@@ -63,10 +63,15 @@ UBX::configure(bool& config_needed, bool& baudrate_changed, unsigned& baudrate, 
 	/* make sure the buffer to write the message is long enough */
 	assert(sizeof(type_gps_bin_cfg_prt_packet_t)+2 <= max_length);
 
+
+
 	if (_config_state == UBX_CONFIG_STATE_CONFIGURED) {
 		config_needed = false;
 		length = 0;
 	} else if (_config_state == UBX_CONFIG_STATE_PRT) {
+
+		usleep(10000); // Slow it down when it's configuring
+
 		/* send a CFT-PRT message to define set ubx protocol and leave the baudrate as is, we just want an ACK-ACK from this */
 		type_gps_bin_cfg_prt_packet_t cfg_prt_packet;
 		memset(&cfg_prt_packet, 0, sizeof(cfg_prt_packet));
@@ -88,6 +93,9 @@ UBX::configure(bool& config_needed, bool& baudrate_changed, unsigned& baudrate, 
 		length = sizeof(cfg_prt_packet)+2;
 
 	} else if (_config_state == UBX_CONFIG_STATE_PRT_NEW_BAUDRATE) {
+
+		usleep(100000); // workaround, otherwise it won't respond
+
 		/* send a CFT-PRT message to define set ubx protocol and and baudrate, now let's try to switch the baudrate */
 		type_gps_bin_cfg_prt_packet_t cfg_prt_packet;
 		memset(&cfg_prt_packet, 0, sizeof(cfg_prt_packet));
@@ -116,6 +124,8 @@ UBX::configure(bool& config_needed, bool& baudrate_changed, unsigned& baudrate, 
 			_config_state = UBX_CONFIG_STATE_RATE;
 			return;
 		}
+
+		usleep(100000);
 
 	} else if (_config_state == UBX_CONFIG_STATE_RATE) {
 
@@ -213,7 +223,7 @@ int
 UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 {
 	int ret = 0;
-	printf("Received char: %c\n", b);
+	//printf("Received char: %c\n", b);
 
 	switch (_decode_state) {
 		/* First, look for sync1 */
