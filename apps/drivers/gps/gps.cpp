@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (C) 2012 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2013 PX4 Development Team. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -128,11 +128,11 @@ private:
 
 	orb_advert_t		_gps_topic;
 
-	void			recv();
+	void				recv();
 
-	void			config();
+	void				config();
 
-	static void		task_main_trampoline(void *arg);
+	static void			task_main_trampoline(void *arg);
 
 
 	/**
@@ -264,28 +264,6 @@ GPS::ioctl(struct file *filp, int cmd, unsigned long arg)
 }
 
 void
-GPS::recv()
-{
-	uint8_t buf[32];
-	int count;
-
-	/*
-	 * We are here because poll says there is some data, so this
-	 * won't block even on a blocking device.  If more bytes are
-	 * available, we'll go back to poll() again...
-	 */
-	count = ::read(_serial_fd, buf, sizeof(buf));
-
-	/* pass received bytes to the packet decoder */
-	for (int i = 0; i < count; i++) {
-		_messages_received += _Helper->parse(buf[i], _report);
-	}
-	if (_messages_received > 0) {
-		orb_publish(ORB_ID(vehicle_gps_position), _report_pub, &_report);
-	}
-}
-
-void
 GPS::config()
 {
 	int length = 0;
@@ -302,10 +280,10 @@ GPS::config()
 	}
 
 	if (_baudrate_changed) {
+		printf("Change baudrate to %d\n", _baudrate);
 		fflush((FILE*)&_serial_fd);
-		usleep(10000);
+		usleep(100000);
 		set_baudrate();
-		usleep(10000);
 		_baudrate_changed = false;
 	}
 
@@ -385,25 +363,50 @@ GPS::task_main()
 			_mode_changed = false;
 		}
 
+		int poll_timeout;
+		if (_config_needed) {
+			poll_timeout = 50;
+			printf("config mode\n");
+		} else {
+			poll_timeout = 250;
+		}
 		/* sleep waiting for data, but no more than 1000ms */
 		unlock();
-		int ret = ::poll(fds, sizeof(fds) / sizeof(fds[0]), 100);
+		int ret = ::poll(fds, sizeof(fds) / sizeof(fds[0]), poll_timeout);
 		lock();
+
+		uint8_t buf[256];
 
 		/* this would be bad... */
 		if (ret < 0) {
 			log("poll error %d", errno);
+			printf("time to configure\n");
 		} else if (ret == 0) {
-			_healthy = false;
+			printf("nothing on buffer!\n");
+			if (/*!_healthy || */_config_needed) {
+
+				config();
+			}
 		} else if (ret > 0) {
 			/* if we have new data from GPS, go handle it */
 			if (fds[0].revents & POLLIN) {
-				recv();
-			}
-		}
+				int count;
 
-		if (/*!_healthy || */_config_needed) {
-			config();
+				/*
+				 * We are here because poll says there is some data, so this
+				 * won't block even on a blocking device.  If more bytes are
+				 * available, we'll go back to poll() again...
+				 */
+				count = ::read(_serial_fd, buf, sizeof(buf));
+
+				/* pass received bytes to the packet decoder */
+				for (int i = 0; i < count; i++) {
+					_messages_received += _Helper->parse(buf[i], _report);
+				}
+				if (_messages_received > 0) {
+					orb_publish(ORB_ID(vehicle_gps_position), _report_pub, &_report);
+				}
+			}
 		}
 	}
 

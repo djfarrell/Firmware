@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (C) 2008-2012 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2008-2013 PX4 Development Team. All rights reserved.
  *   Author: Thomas Gubler <thomasgubler@student.ethz.ch>
  *           Julian Oes <joes@student.ethz.ch>
  *
@@ -47,7 +47,7 @@
 
 //UBX Protocol definitions (this is the subset of the messages that are parsed)
 #define UBX_CLASS_NAV 0x01
-#define UBX_CLASS_RXM 0x02
+//#define UBX_CLASS_RXM 0x02
 #define UBX_CLASS_ACK 0x05
 #define UBX_CLASS_CFG 0x06
 #define UBX_MESSAGE_NAV_POSLLH 0x02
@@ -56,7 +56,7 @@
 #define UBX_MESSAGE_NAV_DOP 0x04
 #define UBX_MESSAGE_NAV_SVINFO 0x30
 #define UBX_MESSAGE_NAV_VELNED 0x12
-#define UBX_MESSAGE_RXM_SVSI 0x20
+//#define UBX_MESSAGE_RXM_SVSI 0x20
 #define UBX_MESSAGE_ACK_ACK 0x01
 #define UBX_MESSAGE_ACK_NAK 0x00
 #define UBX_MESSAGE_CFG_PRT 0x00
@@ -89,6 +89,7 @@
 // ************
 /** the structures of the binary packets */
 #pragma pack(push, 1)
+
 typedef struct {
 	uint32_t time_milliseconds; // GPS Millisecond Time of Week
 	int32_t lon;  // Longitude * 1e-7, deg
@@ -97,12 +98,9 @@ typedef struct {
 	int32_t height_msl;  // Height above mean sea level, mm
 	uint32_t hAcc;  // Horizontal Accuracy Estimate, mm
 	uint32_t vAcc;  // Vertical Accuracy Estimate, mm
-
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_nav_posllh_packet;
-
-typedef type_gps_bin_nav_posllh_packet gps_bin_nav_posllh_packet_t;
+} gps_bin_nav_posllh_packet_t;
 
 typedef struct {
 	uint32_t time_milliseconds; // GPS Millisecond Time of Week
@@ -122,12 +120,9 @@ typedef struct {
 	uint8_t reserved1;
 	uint8_t numSV;
 	uint32_t reserved2;
-
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_nav_sol_packet;
-
-typedef type_gps_bin_nav_sol_packet gps_bin_nav_sol_packet_t;
+} gps_bin_nav_sol_packet_t;
 
 typedef struct {
 	uint32_t time_milliseconds; // GPS Millisecond Time of Week
@@ -140,13 +135,9 @@ typedef struct {
 	uint8_t min; //Minute of Hour, range 0..59 (UTC)
 	uint8_t sec; //Seconds of Minute, range 0..59 (UTC)
 	uint8_t valid_flag; //Validity Flags (see ubx documentation)
-
-
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_nav_timeutc_packet;
-
-typedef type_gps_bin_nav_timeutc_packet gps_bin_nav_timeutc_packet_t;
+} gps_bin_nav_timeutc_packet_t;
 
 typedef struct {
 	uint32_t time_milliseconds; // GPS Millisecond Time of Week
@@ -157,13 +148,9 @@ typedef struct {
 	uint16_t hDOP; //Horizontal DOP (scaling 0.01)
 	uint16_t nDOP; //Northing DOP (scaling 0.01)
 	uint16_t eDOP; //Easting DOP (scaling 0.01)
-
-
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_nav_dop_packet;
-
-typedef type_gps_bin_nav_dop_packet gps_bin_nav_dop_packet_t;
+} gps_bin_nav_dop_packet_t;
 
 typedef struct {
 	uint32_t time_milliseconds; // GPS Millisecond Time of Week
@@ -171,9 +158,7 @@ typedef struct {
 	uint8_t globalFlags;
 	uint16_t reserved2;
 
-} type_gps_bin_nav_svinfo_part1_packet;
-
-typedef type_gps_bin_nav_svinfo_part1_packet gps_bin_nav_svinfo_part1_packet_t;
+} gps_bin_nav_svinfo_part1_packet_t;
 
 typedef struct {
 	uint8_t chn; //Channel number, 255 for SVs not assigned to a channel
@@ -185,18 +170,12 @@ typedef struct {
 	int16_t azim; //Azimuth in integer degrees
 	int32_t prRes; //Pseudo range residual in centimetres
 
-} type_gps_bin_nav_svinfo_part2_packet;
-
-typedef type_gps_bin_nav_svinfo_part2_packet gps_bin_nav_svinfo_part2_packet_t;
+} gps_bin_nav_svinfo_part2_packet_t;
 
 typedef struct {
 	uint8_t ck_a;
 	uint8_t ck_b;
-
-} type_gps_bin_nav_svinfo_part3_packet;
-
-typedef type_gps_bin_nav_svinfo_part3_packet gps_bin_nav_svinfo_part3_packet_t;
-
+} gps_bin_nav_svinfo_part3_packet_t;
 
 typedef struct {
 	uint32_t time_milliseconds; // GPS Millisecond Time of Week
@@ -208,23 +187,25 @@ typedef struct {
 	int32_t heading; //Heading of motion 2-D, deg, scaling: 1e-5
 	uint32_t sAcc; //Speed Accuracy Estimate, cm/s
 	uint32_t cAcc; //Course / Heading Accuracy Estimate, scaling: 1e-5
-
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_nav_velned_packet;
+} gps_bin_nav_velned_packet_t;
 
-typedef type_gps_bin_nav_velned_packet gps_bin_nav_velned_packet_t;
+//typedef struct {
+//	int32_t time_milliseconds; // Measurement integer millisecond GPS time of week
+//	int16_t week; //Measurement GPS week number
+//	uint8_t numVis; //Number of visible satellites
+//
+//	//... rest of package is not used in this implementation
+//
+//} gps_bin_rxm_svsi_packet_t;
 
 typedef struct {
-	int32_t time_milliseconds; // Measurement integer millisecond GPS time of week
-	int16_t week; //Measurement GPS week number
-	uint8_t numVis; //Number of visible satellites
-
-	//... rest of package is not used in this implementation
-
-} type_gps_bin_rxm_svsi_packet;
-
-typedef type_gps_bin_rxm_svsi_packet gps_bin_rxm_svsi_packet_t;
+	uint8_t clsID;
+	uint8_t msgID;
+	uint8_t ck_a;
+	uint8_t ck_b;
+} gps_bin_ack_ack_packet_t;
 
 typedef struct {
 	uint8_t clsID;
@@ -232,19 +213,7 @@ typedef struct {
 
 	uint8_t ck_a;
 	uint8_t ck_b;
-} type_gps_bin_ack_ack_packet;
-
-typedef type_gps_bin_ack_ack_packet gps_bin_ack_ack_packet_t;
-
-typedef struct {
-	uint8_t clsID;
-	uint8_t msgID;
-
-	uint8_t ck_a;
-	uint8_t ck_b;
-} type_gps_bin_ack_nak_packet;
-
-typedef type_gps_bin_ack_nak_packet gps_bin_ack_nak_packet_t;
+} gps_bin_ack_nak_packet_t;
 
 typedef struct {
 	uint8_t clsID;
@@ -294,7 +263,6 @@ typedef struct {
 	uint32_t reserved2;
 	uint32_t reserved3;
 	uint32_t reserved4;
-
 	uint8_t ck_a;
 	uint8_t ck_b;
 } type_gps_bin_cfg_nav5_packet_t;
@@ -306,7 +274,6 @@ typedef struct {
 	uint8_t msgClass_payload;
 	uint8_t msgID_payload;
 	uint8_t rate[6];
-
 	uint8_t ck_a;
 	uint8_t ck_b;
 } type_gps_bin_cfg_msg_packet_t;
@@ -326,7 +293,7 @@ typedef enum {
 	UBX_CONFIG_STATE_MSG_NAV_SVINFO,
 	UBX_CONFIG_STATE_MSG_NAV_SOL,
 	UBX_CONFIG_STATE_MSG_NAV_VELNED,
-	UBX_CONFIG_STATE_MSG_RXM_SVSI,
+//	UBX_CONFIG_STATE_MSG_RXM_SVSI,
 	UBX_CONFIG_STATE_CONFIGURED
 } ubx_config_state_t;
 
@@ -341,26 +308,26 @@ typedef enum {
 typedef enum {
 	//these numbers do NOT correspond to the message id numbers of the ubx protocol
 	ID_UNKNOWN = 0,
-	NAV_POSLLH = 1,
-	NAV_SOL = 2,
-	NAV_TIMEUTC = 3,
-	NAV_DOP = 4,
-	NAV_SVINFO = 5,
-	NAV_VELNED = 6,
-	RXM_SVSI = 7,
-	CFG_NAV5 = 8,
-	ACK_ACK = 9,
-	ACK_NAK = 10
+	NAV_POSLLH,
+	NAV_SOL,
+	NAV_TIMEUTC,
+	NAV_DOP,
+	NAV_SVINFO,
+	NAV_VELNED,
+//	RXM_SVSI,
+	CFG_NAV5,
+	ACK_ACK,
+	ACK_NAK,
 } ubx_message_id_t;
 
 typedef enum {
 	UBX_DECODE_UNINIT = 0,
-	UBX_DECODE_GOT_SYNC1 = 1,
-	UBX_DECODE_GOT_SYNC2 = 2,
-	UBX_DECODE_GOT_CLASS = 3,
-	UBX_DECODE_GOT_MESSAGEID = 4,
-	UBX_DECODE_GOT_LENGTH1 = 5,
-	UBX_DECODE_GOT_LENGTH2 = 6
+	UBX_DECODE_GOT_SYNC1,
+	UBX_DECODE_GOT_SYNC2,
+	UBX_DECODE_GOT_CLASS,
+	UBX_DECODE_GOT_MESSAGEID,
+	UBX_DECODE_GOT_LENGTH1,
+	UBX_DECODE_GOT_LENGTH2
 } ubx_decode_state_t;
 
 //typedef type_gps_bin_ubx_state gps_bin_ubx_state_t;
@@ -381,6 +348,8 @@ private:
 	void				decodeInit(void);
 	void				addByteToChecksum(uint8_t);
 	void				addChecksumToMessage(uint8_t*, const unsigned);
+	unsigned			_waited;
+	bool 				_waiting_for_ack;
 	ubx_config_state_t	_config_state;
 	ubx_decode_state_t	_decode_state;
 	uint8_t				_rx_buffer[RECV_BUFFER_SIZE];

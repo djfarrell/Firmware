@@ -1,6 +1,6 @@
 /****************************************************************************
  *
- *   Copyright (C) 2008-2012 PX4 Development Team. All rights reserved.
+ *   Copyright (C) 2008-2013 PX4 Development Team. All rights reserved.
  *   Author: Thomas Gubler <thomasgubler@student.ethz.ch>
  *           Julian Oes <joes@student.ethz.ch>
  *
