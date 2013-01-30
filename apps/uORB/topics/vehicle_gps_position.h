@@ -59,11 +59,11 @@ struct vehicle_gps_position_s
 	uint32_t counter;			/**< Count of GPS messages */
 	uint64_t time_gps_usec;			/**< Timestamp (microseconds in GPS format), this is the timestamp which comes from the gps module   */
 	
-	int32_t lat;				/**< Latitude in 1E7 degrees //LOGME   */
-	int32_t lon;				/**< Longitude in 1E7 degrees //LOGME   */
-	int32_t alt;				/**< Altitude in 1E3 meters (millimeters) above MSL //LOGME   */
+	int32_t lat;				/**< Latitude in 1E7 degrees    */
+	int32_t lon;				/**< Longitude in 1E7 degrees    */
+	int32_t alt;				/**< Altitude in 1E3 meters (millimeters) above MSL    */
 	uint16_t counter_pos_valid;		/**< is only increased when new lat/lon/alt information was added   */
-	uint16_t eph;				/**< GPS HDOP horizontal dilution of position in cm (m*100). If unknown, set to: 65535 //LOGME   */
+	uint16_t eph;				/**< GPS HDOP horizontal dilution of position in cm (m*100). If unknown, set to: 65535   */
 	uint16_t epv;				/**< GPS VDOP horizontal dilution of position in cm (m*100). If unknown, set to: 65535   */
 	float s_variance;			/**< speed accuracy estimate cm/s */
 	float p_variance;			/**< position accuracy estimate cm */
