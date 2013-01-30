@@ -37,20 +37,22 @@
  */
 
 #include <nuttx/config.h>
-#include <stdio.h>
+
+#include <stdio.h>	// required for task_create
 #include <stdbool.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <debug.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
-
-#include <nuttx/clock.h>
+#include <poll.h>
 
 #include <drivers/drv_pwm_output.h>
 #include <drivers/drv_hrt.h>
 
+#include <systemlib/perf_counter.h>
+
+#include <stm32_uart.h>
+
+#define DEBUG
 #include "px4io.h"
 
 __EXPORT int user_start(int argc, char *argv[]);
@@ -59,6 +61,8 @@ extern void up_cxxinitialize(void);
 
 struct sys_state_s 	system_state;
 
+static struct hrt_call serial_dma_call;
+
 int user_start(int argc, char *argv[])
 {
 	/* run C++ ctors before we go any further */
@@ -66,14 +70,18 @@ int user_start(int argc, char *argv[])
 
 	/* reset all to zero */
 	memset(&system_state, 0, sizeof(system_state));
-	/* default to 50 Hz PWM outputs */
-	system_state.servo_rate = 50;
 
 	/* configure the high-resolution time/callout interface */
 	hrt_init();
 
+	/*
+	 * Poll at 1ms intervals for received bytes that have not triggered
+	 * a DMA event.
+	 */
+	hrt_call_every(&serial_dma_call, 1000, 1000, (hrt_callout)stm32_serial_dma_poll, NULL);
+
 	/* print some startup info */
-	lib_lowprintf("\nPX4IO: starting\n");
+	debug("\nPX4IO: starting\n");
 
 	/* default all the LEDs to off while we start */
 	LED_AMBER(false);
@@ -98,8 +106,20 @@ int user_start(int argc, char *argv[])
 
 
 	struct mallinfo minfo = mallinfo();
-	lib_lowprintf("free %u largest %u\n", minfo.mxordblk, minfo.fordblks);
+	debug("free %u largest %u\n", minfo.mxordblk, minfo.fordblks);
 
-	/* we're done here, go run the communications loop */
-	comms_main();
+	/* start the i2c handler */
+	i2c_init();
+
+	/* add a performance counter for mixing */
+	perf_counter_t mixer_perf = perf_alloc(PC_ELAPSED, "mix");
+
+	/* run the mixer at 100Hz (for now...) */
+	/* XXX we should use CONFIG_IDLE_CUSTOM and take over the idle thread instead of running two additional tasks */
+	for (;;) {
+		poll(NULL, 0, 10);
+		perf_begin(mixer_perf);
+		mixer_tick();
+		perf_end(mixer_perf);
+	}
 }
