@@ -75,6 +75,9 @@
 #define SEND_BUFFER_LENGTH 100
 #define TIMEOUT 1000000 //1s
 
+#define NUMBER_OF_BAUDRATES 4
+#define CONFIG_TIMEOUT 2000000
+
 /* oddly, ERROR is not defined for c++ */
 #ifdef ERROR
 # undef ERROR
@@ -107,13 +110,14 @@ private:
 	int					_task_should_exit;
 	int					_serial_fd;		///< serial interface to GPS
 	unsigned			_baudrate;
-	unsigned			_baudrates_to_try[4];
+	unsigned			_baudrates_to_try[NUMBER_OF_BAUDRATES];
 	uint8_t				_send_buffer[SEND_BUFFER_LENGTH];
 	perf_counter_t		_sample_perf;
 	perf_counter_t		_comms_errors;
 	perf_counter_t		_buffer_overflows;
 	volatile int		_task;		///< worker task
 
+	bool				_response_received;
 	bool				_config_needed;
 	bool 				_baudrate_changed;
 	bool				_mode_changed;
@@ -121,9 +125,9 @@ private:
 	gps_driver_mode_t	_mode;
 	unsigned 			_messages_received;
 
-	GPS_Helper*			_Helper;	///< Class for either UBX, MTK or NMEA helper
+	GPS_Helper			*_Helper;	///< Class for either UBX, MTK or NMEA helper
 
-	struct vehicle_gps_position_s	*_report;
+	struct vehicle_gps_position_s _report;
 	orb_advert_t		_report_pub;
 
 	orb_advert_t		_gps_topic;
@@ -173,8 +177,7 @@ GPS::GPS() :
 	_healthy(false),
 	_mode(GPS_DRIVER_MODE_UBX),
 	_messages_received(0),
-	_Helper(nullptr),
-	_report(nullptr)
+	_Helper(nullptr)
 {
 	/* we need this potentially before it could be set in task_main */
 	g_dev = this;
@@ -217,8 +220,8 @@ GPS::init()
 		return -errno;
 	}
 
-	if (_gps_topic < 0)
-		debug("failed to create GPS object");
+//	if (_gps_topic < 0)
+//		debug("failed to create GPS object");
 
 	ret = OK;
 out:
@@ -276,18 +279,12 @@ GPS::config()
 			debug("write config failed");
 			return;
 		}
-		printf("Wrote config at baud: %d\n", _baudrate);
 	}
 
 	if (_baudrate_changed) {
-		printf("Change baudrate to %d\n", _baudrate);
-		fflush((FILE*)&_serial_fd);
-		usleep(100000);
 		set_baudrate();
 		_baudrate_changed = false;
 	}
-
-
 }
 
 void
@@ -301,30 +298,21 @@ GPS::task_main()
 {
 	log("starting");
 
-	_baudrate = _baudrates_to_try[0];
-
 	_report_pub = orb_advertise(ORB_ID(vehicle_gps_position), &_report);
+
+	memset(&_report, 0, sizeof(_report));
 
 	/* open the serial port */
 	_serial_fd = ::open("/dev/ttyS3", O_RDWR);
+
+	uint8_t buf[256];
+	int baud_i = 0;
+	uint64_t time_before_configuration;
 
 	if (_serial_fd < 0) {
 		log("failed to open serial port: %d", errno);
 		goto out;
 	}
-
-	set_baudrate();
-
-//	{
-//		/* no parity, one stop bit */
-//			struct termios t;
-//
-//			tcgetattr(_serial_fd, &t);
-//			cfsetspeed(&t, _baudrate);
-//			t.c_cflag &= ~(CSTOPB | PARENB);
-//			tcsetattr(_serial_fd, TCSANOW, &t);
-//	}
-
 
 	/* poll descriptor */
 	pollfd fds[1];
@@ -334,6 +322,12 @@ GPS::task_main()
 
 	/* lock against the ioctl handler */
 	lock();
+
+
+	_baudrate = _baudrates_to_try[baud_i];
+	set_baudrate();
+
+	time_before_configuration = hrt_absolute_time();
 
 	/* loop handling received serial bytes */
 	while (!_task_should_exit) {
@@ -363,10 +357,17 @@ GPS::task_main()
 			_mode_changed = false;
 		}
 
+		if (_config_needed && time_before_configuration + CONFIG_TIMEOUT < hrt_absolute_time()) {
+			baud_i = (baud_i+1)%NUMBER_OF_BAUDRATES;
+			_baudrate = _baudrates_to_try[baud_i];
+			set_baudrate();
+			time_before_configuration = hrt_absolute_time();
+		}
+
+
 		int poll_timeout;
 		if (_config_needed) {
 			poll_timeout = 50;
-			printf("config mode\n");
 		} else {
 			poll_timeout = 250;
 		}
@@ -375,17 +376,17 @@ GPS::task_main()
 		int ret = ::poll(fds, sizeof(fds) / sizeof(fds[0]), poll_timeout);
 		lock();
 
-		uint8_t buf[256];
+
+
 
 		/* this would be bad... */
 		if (ret < 0) {
 			log("poll error %d", errno);
-			printf("time to configure\n");
 		} else if (ret == 0) {
-			printf("nothing on buffer!\n");
-			if (/*!_healthy || */_config_needed) {
-
-				config();
+			config();
+			if (_config_needed == false) {
+				_config_needed = true;
+				debug("Lost GPS module");
 			}
 		} else if (ret > 0) {
 			/* if we have new data from GPS, go handle it */
@@ -400,22 +401,24 @@ GPS::task_main()
 				count = ::read(_serial_fd, buf, sizeof(buf));
 
 				/* pass received bytes to the packet decoder */
-				for (int i = 0; i < count; i++) {
-					_messages_received += _Helper->parse(buf[i], _report);
+				int j;
+				for (j = 0; j < count; j++) {
+					_messages_received += _Helper->parse(buf[j], &_report);
 				}
 				if (_messages_received > 0) {
+					if (_config_needed == true) {
+						_config_needed = false;
+						debug("Found GPS module");
+					}
+
 					orb_publish(ORB_ID(vehicle_gps_position), _report_pub, &_report);
+					_messages_received = 0;
 				}
 			}
 		}
 	}
-
 out:
 	debug("exiting");
-
-	/* kill the HX stream */
-//	if (_io_stream != nullptr)
-//		hx_stream_free(_io_stream);
 
 	::close(_serial_fd);
 
@@ -427,11 +430,9 @@ out:
 void
 GPS::set_baudrate()
 {
-	printf("change baudrate to %d\n", _baudrate);
-
+	usleep(100000);
 	/* no parity, one stop bit */
 	struct termios t;
-
 	if (tcgetattr(_serial_fd, &t) != 0)
 		printf("tcgetattr fail\n");
 	if (cfsetspeed(&t, _baudrate) != 0)
@@ -439,6 +440,7 @@ GPS::set_baudrate()
 	t.c_cflag &= ~(CSTOPB | PARENB);
 	if (tcsetattr(_serial_fd, TCSANOW, &t) != 0)
 		printf("tcsetattr_fail\n");
+	usleep(10000);
 }
 
 void

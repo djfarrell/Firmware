@@ -48,11 +48,16 @@
 
 
 UBX::UBX() :
-_config_state(UBX_CONFIG_STATE_PRT)
+_waited(0),
+_config_state(UBX_CONFIG_STATE_PRT),
+_new_nav_posllh(false),
+_new_nav_timeutc(false),
+_new_nav_dop(false),
+_new_nav_sol(false),
+_new_nav_velned(false)
 {
 	decodeInit();
 	_waiting_for_ack = false;
-	_waited = 0;
 }
 
 UBX::~UBX()
@@ -60,21 +65,26 @@ UBX::~UBX()
 }
 
 void
-UBX::configure(bool& config_needed, bool& baudrate_changed, unsigned& baudrate, uint8_t* buffer, int& length, const unsigned max_length)
+UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, uint8_t *buffer, int &length, const unsigned max_length)
 {
 	/* make sure the buffer to write the message is long enough */
 	assert(sizeof(type_gps_bin_cfg_prt_packet_t)+2 <= max_length);
 
+	/* try again after 10 times */
+	if (_waited > 10) {
+		_waiting_for_ack = false;
+	}
+
 	if (!_waiting_for_ack) {
-		_waited = 0;
 		_waiting_for_ack = true;
+		_waited = 0;
 		if (_config_state == UBX_CONFIG_STATE_CONFIGURED) {
 			config_needed = false;
 			length = 0;
-			printf("Configuration finished\n");
+			_config_state = UBX_CONFIG_STATE_PRT; /* set the state for next time */
+			_waiting_for_ack = false;
 			return;
 		} else if (_config_state == UBX_CONFIG_STATE_PRT) {
-
 			/* send a CFT-PRT message to define set ubx protocol and leave the baudrate as is, we just want an ACK-ACK from this */
 			type_gps_bin_cfg_prt_packet_t cfg_prt_packet;
 			memset(&cfg_prt_packet, 0, sizeof(cfg_prt_packet));
@@ -97,7 +107,7 @@ UBX::configure(bool& config_needed, bool& baudrate_changed, unsigned& baudrate, 
 
 		} else if (_config_state == UBX_CONFIG_STATE_PRT_NEW_BAUDRATE) {
 
-			printf("Send change of baudrate now\n");
+//			printf("Send change of baudrate now\n");
 
 			/* send a CFT-PRT message to define set ubx protocol and and baudrate, now let's try to switch the baudrate */
 			type_gps_bin_cfg_prt_packet_t cfg_prt_packet;
@@ -133,7 +143,6 @@ UBX::configure(bool& config_needed, bool& baudrate_changed, unsigned& baudrate, 
 
 		} else if (_config_state == UBX_CONFIG_STATE_RATE) {
 
-			printf("Sending a rate now\n");
 			/* send a CFT-RATE message to define update rate */
 			type_gps_bin_cfg_rate_packet_t cfg_rate_packet;
 			memset(&cfg_rate_packet, 0, sizeof(cfg_rate_packet));
@@ -225,12 +234,6 @@ UBX::configure(bool& config_needed, bool& baudrate_changed, unsigned& baudrate, 
 		}
 	} else {
 		_waited++;
-		printf("Config already written, waiting...\n");
-	}
-
-	if (_waited > 3) {
-		_waited = 0;
-		_waiting_for_ack = false;
 	}
 }
 
@@ -392,7 +395,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 					if (_rx_count >= _payload_size + 1) { //+1 because of 2 checksum bytes
 						switch (_message_id) { //this enum is unique for all ids --> no need to check the class
 							case NAV_POSLLH: {
-								printf("GOT NAV_POSLLH MESSAGE\n");
+//								printf("GOT NAV_POSLLH MESSAGE\n");
 								gps_bin_nav_posllh_packet_t *packet = (gps_bin_nav_posllh_packet_t *) _rx_buffer;
 
 								//Check if checksum is valid and the store the gps information
@@ -402,17 +405,12 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->alt = packet->height_msl;
 
 									gps_position->counter_pos_valid++;
-
-									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
-									_last_message_timestamps[NAV_POSLLH - 1] = hrt_absolute_time();
-									ret = 1;
+									_new_nav_posllh = true;
 
 								} else {
 									printf("[gps] NAV_POSLLH: checksum invalid\n");
-
-									ret = 0;
 								}
 
 								// Reset state machine to decode next packet
@@ -423,7 +421,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 							}
 
 							case NAV_SOL: {
-								printf("GOT NAV_SOL MESSAGE\n");
+//								printf("GOT NAV_SOL MESSAGE\n");
 								gps_bin_nav_sol_packet_t *packet = (gps_bin_nav_sol_packet_t *) _rx_buffer;
 
 								//Check if checksum is valid and the store the gps information
@@ -436,8 +434,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->s_variance = packet->sAcc;
 									gps_position->p_variance = packet->pAcc;
 
-									_last_message_timestamps[NAV_SOL - 1] = hrt_absolute_time();
-									ret = 1;
+									_new_nav_sol = true;
 
 								} else {
 									printf("[gps] NAV_SOL: checksum invalid\n");
@@ -451,7 +448,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 							}
 
 							case NAV_DOP: {
-								printf("GOT NAV_DOP MESSAGE\n");
+//								printf("GOT NAV_DOP MESSAGE\n");
 								gps_bin_nav_dop_packet_t *packet = (gps_bin_nav_dop_packet_t *) _rx_buffer;
 
 								//Check if checksum is valid and the store the gps information
@@ -463,8 +460,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
-									_last_message_timestamps[NAV_DOP - 1] = hrt_absolute_time();
-									ret = 1;
+									_new_nav_dop = true;
 
 								} else {
 									printf("[gps] NAV_DOP: checksum invalid\n");
@@ -478,7 +474,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 							}
 
 							case NAV_TIMEUTC: {
-								printf("GOT NAV_TIMEUTC MESSAGE\n");
+//								printf("GOT NAV_TIMEUTC MESSAGE\n");
 								gps_bin_nav_timeutc_packet_t *packet = (gps_bin_nav_timeutc_packet_t *) _rx_buffer;
 
 								//Check if checksum is valid and the store the gps information
@@ -500,8 +496,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
-									_last_message_timestamps[NAV_TIMEUTC - 1] = hrt_absolute_time();
-									ret = 1;
+									_new_nav_timeutc = true;
 
 								} else {
 									printf("\t[gps] NAV_TIMEUTC: checksum invalid\n");
@@ -515,7 +510,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 							}
 
 							case NAV_SVINFO: {
-								printf("GOT NAV_SVINFO MESSAGE\n");
+//								printf("GOT NAV_SVINFO MESSAGE\n");
 
 								//this is a more complicated message: the length depends on the number of satellites. This number is extracted from the first part of the message
 								const int length_part1 = 8;
@@ -595,9 +590,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
-
-									_last_message_timestamps[NAV_SVINFO - 1] = hrt_absolute_time();
-									ret = 1;
+									// as this message arrives only with 1Hz and is not essential, we don't take it into account for the report
 
 								} else {
 									printf("\t[gps] NAV_SVINFO: checksum invalid\n");
@@ -628,10 +621,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->counter++;
 
 
-									//pthread_mutex_lock(ubx_mutex);
-									_last_message_timestamps[NAV_VELNED - 1] = hrt_absolute_time();
-									//pthread_mutex_unlock(ubx_mutex);
-									ret = 1;
+									_new_nav_velned = true;
 
 								} else {
 									printf("[gps] NAV_VELNED: checksum invalid\n");
@@ -696,12 +686,10 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									case UBX_CONFIG_STATE_NAV5:
 										if (packet->clsID == UBX_CLASS_CFG && packet->msgID == UBX_MESSAGE_CFG_NAV5)
 											_config_state = UBX_CONFIG_STATE_MSG_NAV_POSLLH;
-											printf("we got a NAV5 ACK_ACK\n");
 										break;
 									case UBX_CONFIG_STATE_MSG_NAV_POSLLH:
 										if (packet->clsID == UBX_CLASS_CFG && packet->msgID == UBX_MESSAGE_CFG_MSG)
 											_config_state = UBX_CONFIG_STATE_MSG_NAV_TIMEUTC;
-											printf("we got a MSG NAV ACK_ACK\n");
 										break;
 									case UBX_CONFIG_STATE_MSG_NAV_TIMEUTC:
 										if (packet->clsID == UBX_CLASS_CFG && packet->msgID == UBX_MESSAGE_CFG_MSG)
@@ -724,18 +712,12 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 											_config_state = UBX_CONFIG_STATE_CONFIGURED;
 										break;
 //									case UBX_CONFIG_STATE_MSG_RXM_SVSI:
-//										printf("clsID: %x, msgID: %x\n", packet->clsID, packet->msgID);
 //										if (packet->clsID == UBX_CLASS_CFG && packet->msgID == UBX_MESSAGE_CFG_MSG)
 //											_config_state = UBX_CONFIG_STATE_CONFIGURED;
 //										break;
 									default:
 										break;
 								}
-
-								printf("current config state: %d\n", _config_state);
-
-								ret = 1;
-
 							} else {
 								printf("[gps] ACK_ACK: checksum invalid\n");
 							}
@@ -784,6 +766,18 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 				break;
 		default:
 			break;
+	}
+
+	/* return 1 when all needed messages have arrived */
+	if(_new_nav_posllh &&_new_nav_timeutc && _new_nav_dop && _new_nav_sol && _new_nav_velned) {
+
+		gps_position->timestamp = hrt_absolute_time();
+		ret = 1;
+		_new_nav_posllh = false;
+		_new_nav_timeutc = false;
+		_new_nav_dop = false;
+		_new_nav_sol = false;
+		_new_nav_velned = false;
 	}
 
 	return ret;
