@@ -45,6 +45,7 @@
 #include "drv_orb_dev.h"
 
 #define GPS_DEVICE_PATH	"/dev/gps"
+#define GPS_BAUDRATES_TO_TRY {9600, 38400, 57600, 115200}
 
 typedef enum {
 	GPS_DRIVER_MODE_UBX = 0,
@@ -52,8 +53,6 @@ typedef enum {
 	GPS_DRIVER_MODE_MTK16,
 	GPS_DRIVER_MODE_NMEA,
 } gps_driver_mode_t;
-
-
 
 
 /*
