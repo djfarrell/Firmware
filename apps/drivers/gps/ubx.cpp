@@ -48,6 +48,7 @@
 
 
 UBX::UBX() :
+_waited(0),
 _config_state(UBX_CONFIG_STATE_PRT),
 _new_nav_posllh(false),
 _new_nav_timeutc(false),
@@ -64,24 +65,19 @@ UBX::~UBX()
 }
 
 void
-UBX::reset()
-{
-	_config_state = UBX_CONFIG_STATE_PRT;
-	_waiting_for_ack = false;
-}
-
-void
 UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, uint8_t *buffer, int &length, const unsigned max_length)
 {
-	/* make sure the buffer, where the message is written to, is long enough */
+	/* make sure the buffer to write the message is long enough */
 	assert(sizeof(type_gps_bin_cfg_prt_packet_t)+2 <= max_length);
 
-	/* Only send a new config message when we got the ACK of the last one,
-	 * otherwise we might not configure all the messages because the ACK comes from an older/previos CFD command
-	 * reason being that the ACK only includes CFG-MSG but not to which NAV MSG it belongs.
-	 */
+	/* try again after 10 times */
+	if (_waited > 10) {
+		_waiting_for_ack = false;
+	}
+
 	if (!_waiting_for_ack) {
 		_waiting_for_ack = true;
+		_waited = 0;
 		if (_config_state == UBX_CONFIG_STATE_CONFIGURED) {
 			config_needed = false;
 			length = 0;
@@ -89,15 +85,10 @@ UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, 
 			_waiting_for_ack = false;
 			return;
 		} else if (_config_state == UBX_CONFIG_STATE_PRT) {
-
-			/* Send a CFG-PRT message to set the UBX protocol for in and out
-			 * and leave the baudrate as it is, we just want an ACK-ACK from this
-			 */
+			/* send a CFT-PRT message to define set ubx protocol and leave the baudrate as is, we just want an ACK-ACK from this */
 			type_gps_bin_cfg_prt_packet_t cfg_prt_packet;
-			/* Set everything else of the packet to 0, otherwise the module wont accept it */
 			memset(&cfg_prt_packet, 0, sizeof(cfg_prt_packet));
 
-			/* Define the package contents, don't change the baudrate */
 			cfg_prt_packet.clsID		= UBX_CLASS_CFG;
 			cfg_prt_packet.msgID		= UBX_MESSAGE_CFG_PRT;
 			cfg_prt_packet.length		= UBX_CFG_PRT_LENGTH;
@@ -107,20 +98,18 @@ UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, 
 			cfg_prt_packet.inProtoMask	= UBX_CFG_PRT_PAYLOAD_INPROTOMASK;
 			cfg_prt_packet.outProtoMask	= UBX_CFG_PRT_PAYLOAD_OUTPROTOMASK;
 
-			/* Calculate the checksum now */
 			addChecksumToMessage((uint8_t*)&cfg_prt_packet, sizeof(cfg_prt_packet));
 
-			/* Start with the two sync bytes */
 			buffer[0] = UBX_SYNC1;
 			buffer[1] = UBX_SYNC2;
-			/* Copy it to the buffer that will be written back in the main gps driver */
 			memcpy(&(buffer[2]), &cfg_prt_packet, sizeof(cfg_prt_packet));
-			/* Set the length of the packet (plus the 2 sync bytes) */
 			length = sizeof(cfg_prt_packet)+2;
 
 		} else if (_config_state == UBX_CONFIG_STATE_PRT_NEW_BAUDRATE) {
 
-			/* Send a CFT-PRT message again, this time change the baudrate */
+//			printf("Send change of baudrate now\n");
+
+			/* send a CFT-PRT message to define set ubx protocol and and baudrate, now let's try to switch the baudrate */
 			type_gps_bin_cfg_prt_packet_t cfg_prt_packet;
 			memset(&cfg_prt_packet, 0, sizeof(cfg_prt_packet));
 
@@ -140,14 +129,17 @@ UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, 
 			memcpy(&(buffer[2]), &cfg_prt_packet, sizeof(cfg_prt_packet));
 			length = sizeof(cfg_prt_packet)+2;
 
-			/* If the new baudrate will be different from the current one, we should report that back to the driver */
+			/* detection when the baudrate has been changed in the first step */
 			if (UBX_CFG_PRT_PAYLOAD_BAUDRATE != baudrate) {
+				/* set a flag and exit */
 				baudrate=UBX_CFG_PRT_PAYLOAD_BAUDRATE;
 				baudrate_changed = true;
-				/* Don't wait for an ACK, we're switching baudrate and we might never get,
-				 * after that, start fresh */
-				reset();
+				_config_state = UBX_CONFIG_STATE_RATE;
+				_waiting_for_ack = false;
+				return;
 			}
+
+
 
 		} else if (_config_state == UBX_CONFIG_STATE_RATE) {
 
@@ -170,9 +162,9 @@ UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, 
 			length = sizeof(cfg_rate_packet)+2;
 
 		} else if (_config_state == UBX_CONFIG_STATE_NAV5) {
-			/* send a NAV5 message to set the options for the internal filter */
+			/* send a NAV5 message to set the options for the internal estimator */
 			type_gps_bin_cfg_nav5_packet_t cfg_nav5_packet;
-			memset(&cfg_nav5_packet, 0, sizeof(cfg_nav5_packet));
+			memset(&cfg_nav5_packet, 0, sizeof(cfg_nav5_packet)); //set everything to 0
 
 			cfg_nav5_packet.clsID        = UBX_CLASS_CFG;
 			cfg_nav5_packet.msgID        = UBX_MESSAGE_CFG_NAV5;
@@ -189,16 +181,15 @@ UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, 
 			length = sizeof(cfg_nav5_packet)+2;
 
 		} else {
-			/* Catch the remaining config states here, they all need the same packet type */
+			/* catch the remaining config states here */
 
 			type_gps_bin_cfg_msg_packet_t cfg_msg_packet;
-			memset(&cfg_msg_packet, 0, sizeof(cfg_msg_packet));
+			memset(&cfg_msg_packet, 0, sizeof(cfg_msg_packet)); //set everything to 0
 
 			cfg_msg_packet.clsID        = UBX_CLASS_CFG;
 			cfg_msg_packet.msgID        = UBX_MESSAGE_CFG_MSG;
 			cfg_msg_packet.length       = UBX_CFG_MSG_LENGTH;
-			/* Choose fast 5Hz rate for all messages except SVINFO which is big and not important */
-			cfg_msg_packet.rate[1]      = UBX_CFG_MSG_PAYLOAD_RATE1_5HZ;
+			cfg_msg_packet.rate[1]      = UBX_CFG_MSG_PAYLOAD_RATE1;
 
 			switch (_config_state) {
 				case UBX_CONFIG_STATE_MSG_NAV_POSLLH:
@@ -216,8 +207,7 @@ UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, 
 				case UBX_CONFIG_STATE_MSG_NAV_SVINFO:
 					cfg_msg_packet.msgClass_payload = UBX_CLASS_NAV;
 					cfg_msg_packet.msgID_payload = UBX_MESSAGE_NAV_SVINFO;
-					/* For satelites info 1Hz is enough */
-					cfg_msg_packet.rate[1] = UBX_CFG_MSG_PAYLOAD_RATE1_1HZ;
+					cfg_msg_packet.rate[1] = 5;
 					break;
 				case UBX_CONFIG_STATE_MSG_NAV_SOL:
 					cfg_msg_packet.msgClass_payload = UBX_CLASS_NAV;
@@ -242,14 +232,16 @@ UBX::configure(bool &config_needed, bool &baudrate_changed, unsigned &baudrate, 
 			memcpy(&(buffer[2]), &cfg_msg_packet, sizeof(cfg_msg_packet));
 			length = sizeof(cfg_msg_packet)+2;
 		}
+	} else {
+		_waited++;
 	}
 }
 
 int
-UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
+UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 {
-	/* if no error happens and no new report is ready yet, ret will stay 0 */
 	int ret = 0;
+	//printf("Received char: %c\n", b);
 
 	switch (_decode_state) {
 		/* First, look for sync1 */
@@ -381,7 +373,6 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 				default: //should not happen because we set the class
 					printf("UBX Error, we set a class that we don't know\n");
 					decodeInit();
-					ret = -1;
 					break;
 				}
 				break;
@@ -424,6 +415,8 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 
 								// Reset state machine to decode next packet
 								decodeInit();
+								return ret;
+
 								break;
 							}
 
@@ -449,6 +442,8 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 
 								// Reset state machine to decode next packet
 								decodeInit();
+								return ret;
+
 								break;
 							}
 
@@ -473,6 +468,8 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 
 								// Reset state machine to decode next packet
 								decodeInit();
+								return ret;
+
 								break;
 							}
 
@@ -507,6 +504,8 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 
 								// Reset state machine to decode next packet
 								decodeInit();
+								return ret;
+
 								break;
 							}
 
@@ -599,6 +598,8 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 
 								// Reset state machine to decode next packet
 								decodeInit();
+								return ret;
+
 								break;
 							}
 
@@ -619,6 +620,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
+
 									_new_nav_velned = true;
 
 								} else {
@@ -627,6 +629,8 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 
 								// Reset state machine to decode next packet
 								decodeInit();
+								return ret;
+
 								break;
 							}
 
@@ -720,6 +724,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 
 							// Reset state machine to decode next packet
 							decodeInit();
+							return ret;
 
 							break;
 						}
@@ -756,30 +761,23 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s *gps_position)
 						_rx_count++;
 					} else {
 						printf("Buffer full");
-						ret = -1;
 						decodeInit();
 					}
 				break;
 		default:
-			printf("Unknown UBX state machine state\n");
-			ret = -1;
 			break;
 	}
 
-
-	/* Return 1 when all needed messages have arrived */
+	/* return 1 when all needed messages have arrived */
 	if(_new_nav_posllh &&_new_nav_timeutc && _new_nav_dop && _new_nav_sol && _new_nav_velned) {
 
-		/* Add timestamp to finish the report */
 		gps_position->timestamp = hrt_absolute_time();
-		/* Reset the flags */
+		ret = 1;
 		_new_nav_posllh = false;
 		_new_nav_timeutc = false;
 		_new_nav_dop = false;
 		_new_nav_sol = false;
 		_new_nav_velned = false;
-
-		ret = 1;
 	}
 
 	return ret;
@@ -815,7 +813,6 @@ UBX::addChecksumToMessage(uint8_t* message, const unsigned length)
 		ck_a = ck_a + message[i];
 		ck_b = ck_b + ck_a;
 	}
-	/* The checksum is written to the last to bytes of a message */
 	message[length-2] = ck_a;
 	message[length-1] = ck_b;
 }
