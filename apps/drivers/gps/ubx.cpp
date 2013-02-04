@@ -371,7 +371,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 					}
 					break;
 				default: //should not happen because we set the class
-					printf("UBX Error, we set a class that we don't know\n");
+					warnx("UBX Error, we set a class that we don't know");
 					decodeInit();
 					break;
 				}
@@ -410,7 +410,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									_new_nav_posllh = true;
 
 								} else {
-									printf("[gps] NAV_POSLLH: checksum invalid\n");
+									warnx("NAV_POSLLH: checksum invalid");
 								}
 
 								// Reset state machine to decode next packet
@@ -429,7 +429,6 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 
 									gps_position->fix_type = packet->gpsFix;
 
-									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 									gps_position->s_variance = packet->sAcc;
 									gps_position->p_variance = packet->pAcc;
@@ -437,7 +436,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									_new_nav_sol = true;
 
 								} else {
-									printf("[gps] NAV_SOL: checksum invalid\n");
+									warnx("NAV_SOL: checksum invalid");
 								}
 
 								// Reset state machine to decode next packet
@@ -457,13 +456,12 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->eph =  packet->hDOP;
 									gps_position->epv =  packet->vDOP;
 
-									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
 									_new_nav_dop = true;
 
 								} else {
-									printf("[gps] NAV_DOP: checksum invalid\n");
+									warnx("NAV_DOP: checksum invalid");
 								}
 
 								// Reset state machine to decode next packet
@@ -493,13 +491,12 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->time_gps_usec = (uint64_t)epoch * 1000000; //TODO: test this
 									gps_position->time_gps_usec += (uint64_t)(packet->time_nanoseconds * 1e-3f);
 
-									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
 									_new_nav_timeutc = true;
 
 								} else {
-									printf("\t[gps] NAV_TIMEUTC: checksum invalid\n");
+									warnx("NAV_TIMEUTC: checksum invalid");
 								}
 
 								// Reset state machine to decode next packet
@@ -587,13 +584,12 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									}
 
 									gps_position->satellites_visible = satellites_used++; // visible ~= used but we are interested in the used ones
-									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
 									// as this message arrives only with 1Hz and is not essential, we don't take it into account for the report
 
 								} else {
-									printf("\t[gps] NAV_SVINFO: checksum invalid\n");
+									warnx("NAV_SVINFO: checksum invalid");
 								}
 
 								// Reset state machine to decode next packet
@@ -617,14 +613,13 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 									gps_position->vel_ned_valid = true;
 									gps_position->cog = (uint16_t)((float)(packet->heading) * 1e-3f);
 
-									gps_position->timestamp = hrt_absolute_time();
 									gps_position->counter++;
 
 
 									_new_nav_velned = true;
 
 								} else {
-									printf("[gps] NAV_VELNED: checksum invalid\n");
+									warnx("NAV_VELNED: checksum invalid");
 								}
 
 								// Reset state machine to decode next packet
@@ -645,13 +640,12 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 //								if (_rx_ck_a == _rx_buffer[_rx_count - 1] && _rx_ck_b == _rx_buffer[_rx_count]) {
 //
 //									gps_position->satellites_visible = packet->numVis;
-//									gps_position->timestamp = hrt_absolute_time();
 //									gps_position->counter++;
 //									_last_message_timestamps[RXM_SVSI - 1] = hrt_absolute_time();
 //									ret = 1;
 //
 //								} else {
-//									printf("[gps] RXM_SVSI: checksum invalid\n");
+//									warnx("RXM_SVSI: checksum invalid\n");
 //								}
 //
 //								// Reset state machine to decode next packet
@@ -719,7 +713,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 										break;
 								}
 							} else {
-								printf("[gps] ACK_ACK: checksum invalid\n");
+								warnx("ACK_ACK: checksum invalid");
 							}
 
 							// Reset state machine to decode next packet
@@ -736,11 +730,11 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 							//Check if checksum is valid
 							if (_rx_ck_a == packet->ck_a && _rx_ck_b == packet->ck_b) {
 
-								printf("[gps] the ubx gps returned: not acknowledged\n");
+								warnx("UBX: NO ACK");
 								ret = 1;
 
 							} else {
-								printf("[gps] ACK_NAK: checksum invalid\n");
+								warnx("ACK_NAK: checksum invalid\n");
 							}
 
 							// Reset state machine to decode next packet
@@ -751,7 +745,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 						}
 
 						default: //we don't know the message
-							printf("Unknown message received: %d-%d\n",_message_class,_message_id);
+							warnx("UBX: Unknown message received: %d-%d\n",_message_class,_message_id);
 							decodeInit();
 
 							break;
@@ -760,7 +754,7 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 					if (_rx_count < RECV_BUFFER_SIZE) {
 						_rx_count++;
 					} else {
-						printf("Buffer full");
+						warnx("buffer overflow");
 						decodeInit();
 					}
 				break;
@@ -768,16 +762,16 @@ UBX::parse(uint8_t b, struct vehicle_gps_position_s* gps_position)
 			break;
 	}
 
-	/* return 1 when all needed messages have arrived */
+	/* return 1 when position updates and the remaining packets updated at least once */
 	if(_new_nav_posllh &&_new_nav_timeutc && _new_nav_dop && _new_nav_sol && _new_nav_velned) {
 
 		gps_position->timestamp = hrt_absolute_time();
 		ret = 1;
 		_new_nav_posllh = false;
-		_new_nav_timeutc = false;
-		_new_nav_dop = false;
-		_new_nav_sol = false;
-		_new_nav_velned = false;
+		// _new_nav_timeutc = false;
+		// _new_nav_dop = false;
+		// _new_nav_sol = false;
+		// _new_nav_velned = false;
 	}
 
 	return ret;
